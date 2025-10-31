@@ -177,3 +177,43 @@ We ran DeBERTa for zero-shot classification to quickly check our news ditributio
 This shows that about 23% of the data in `english_news_v9` is still a little irrelevant. We'll deal with this later though.
 
 # First German News Data Bacth Fetch and Cleanup
+## Step 1: Initial Data fetch
+Similar setup to pulling a broad amount of German news for 5 years. We do it in 2 steps, then combining both datasets. Sources remain the same for both steps.
+
+Sources: `'bild, der-tagesspiegel, die-zeit, focus, handelsblatt, spiegel-online, wirtschafts-woche'`
+
+Keywords #1:
+```
+'Strom OR Energie OR Kraftwerk OR Erneuerbare OR Atomkraft OR Kohlekraftwerk OR Gaskraftwerk OR Windkraft OR '
+'Solar OR Energiepolitik OR Strommarkt OR Energienetz OR Stromnetz OR Strompreis OR Energiepreis OR Stromverbrauch OR '
+'Energieverbrauch OR EZB OR Stromrechnung OR Energiekosten OR Energiekrise OR Stromausfall OR Energieversorgung OR '
+'Heizung OR Klimaanlage OR Kältewelle OR Hitzewelle OR Markt OR Preis OR Politik OR Regulierung OR Stromversorgung'
+```
+This returned 74'807 news articles. Results are saved as `german_news_raw`
+
+Keywords #2:
+```
+'Stromerzeugung OR Stromnachfrage OR Strombedarf OR Stromsparen OR Stromeffizienz OR Stromsparen OR Stromsparen OR Stromsparen OR'
+'Wetter OR EZB OR EPEX OR Zentralbank OR Erdöl OR Erdgas OR Kohle OR OPEC OR IEA OR EU'
+```
+This returned 58'637 News. Results are saved as `german_news_raw2`
+
+## Step 2: Merging & De-Duplication
+Similar to what we did with the english news, we merge both datasets and remove any duplicates. We match on `url` for exact matches. All of this and next steps will be done in `data_analysis_v3.ipynb`.
+
+Post merging we have 133'444 articles, with 11'236 duplicates removed, meaning 122'208 articles remain. This dataset will be saved as `german_news_raw_marged`
+
+## Step 3: Initial Cleanup round
+We're doing a similar process to what we did with the english dataset, by using BERTopic to finad and classify the top 50 topics. Since the headlines are in German we will be using `paraphrase-multilingual-MiniLM-L12-v2`. We found the following irrelevant topics:
+1) `3_kriminalität_polizei_mann_prozess` remove: täter, kokain, drogen, messer
+2) `9_schulen_eltern_kinder_schule` remove: schulen, eltern, bildung, lehrer, mutter
+3) `16_formel_verstappen_hamilton_rennen` remove: formel, verstappen, hammlton, schumacher
+4) `17_tiere_wolf_wölfe_wölfen` remove: tiere, wolf, wölfe, hund, tierschutz, schweinpeste, hunde
+5) `29_weihnachtsmarkt_weihnachten_weihna` remove: weihnachtsmarkt, weihnachten, glühwein
+6) `33_tourismus_urlaub_reisen_touristen` remove: tourismus, urlaub, hotels
+7) `42_mali_sudan_niger_bundeswehr` remove: mali, sudan, niger, kongo
+
+We're keeping sport for now since one paper did find a link to energy usage. After running this first cleanup script we removed 5'070 articles, with 117'138 remaining. Results are saved in `german_news_v1.csv`
+
+## Step 4: Second Cleanup round
+Similar to the methodology above, we run BERT to identify topics.
