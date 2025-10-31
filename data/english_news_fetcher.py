@@ -109,8 +109,10 @@ def main():
     
     # Keywords
     keywords = (
-        'Oil OR Gas OR Electricity OR Energy OR Market OR "Interest Rates" OR Tariffs'
-    )
+        'Renewable OR solar OR wind OR hydro OR nuclear OR coal OR carbon OR emissions OR climate OR ' 
+        'policy OR supply OR OPEC OR IEA OR OECb OR ECB OR "European Comission" OR EPEX OR European Union OR '
+        'ACER OR pipeline OR grid OR transmission OR infrastructure OR storage'
+   )
     
     # Sources
     sources = (
@@ -144,7 +146,7 @@ def main():
         print(news_df['source'].value_counts())
         
         # Save to CSV
-        output_file = 'english_news.csv'
+        output_file = 'english_news2_raw.csv'
         news_df.to_csv(output_file, index=False)
         print(f"\nData saved to: {output_file}")
     else:
@@ -153,4 +155,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
