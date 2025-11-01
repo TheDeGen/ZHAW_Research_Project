@@ -176,6 +176,7 @@ We ran DeBERTa for zero-shot classification to quickly check our news ditributio
 
 This shows that about 23% of the data in `english_news_v9` is still a little irrelevant. We'll deal with this later though.
 
+---
 # First German News Data Bacth Fetch and Cleanup
 ## Step 1: Initial Data fetch
 Similar setup to pulling a broad amount of German news for 5 years. We do it in 2 steps, then combining both datasets. Sources remain the same for both steps.
