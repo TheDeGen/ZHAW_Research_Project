@@ -261,4 +261,25 @@ We're doing a similar process to what we did with the english dataset, by using 
 We're keeping sport for now since one paper did find a link to energy usage. After running this first cleanup script we removed 5'070 articles, with 117'138 remaining. Results are saved in `german_news_v1.csv`
 
 ## Step 4: Second Cleanup round
-Similar to the methodology above, we run BERT to identify topics.
+Same methodology, we identified the following topics to remove:
+1) `12_tiere_wolf_wölfe_wölfen` remove: wolf, wölfe, klauenseuche, abschuss, hund
+2) `19_preis_auszeichnung_literatur_ausze...` remove: literaturpreis
+3) `37_kinder_schule_einsamkeit_coaching` remove: podcast, coaching, einsamkeit
+4) `62_apple_iphone_iphones_apples` remove: fortnite
+5) `63_film_filmpreis_filmfestival_filmfe...` remove: filmpreis, filmfestival, filmfestspiele
+6) `74_pride_lgbtq_lgbt_ungarn` remove: pride, lgbtq, lgbt, queere
+7) `95_black_friday_amazon_prime` remove: schnäppchen
+
+This allowed us to remove 2'520 articles, leaving us with 114'618 in the dataset. Results saved as `german_news_v2`
+
+## Step 5: Third Cleanup round
+Same methodology, we identified the following topics to remove:
+1) `123_cannabis_legalisierung_freigabe_m...` remove: cannabis, marihuana, kiffen, cannabisgesetz
+2) `126_shopping_deal_online_focus` remove: shopping
+3) `145_social_media_chatkontrolle_medien ` remove: chatkontrolle, altersgrenze
+4) `154_gewalt_frauen_vergewaltigung_sexu...` remove: vergewaltigung, sexuelle, sexueller, belästigung
+5) `156_games_gamescom_gamestop_spiel` remove: gamescom, brettspiel, playmobil, nintendo
+6) `168_eurojackpot_lotto24_lotto_felder` remove: eurojackpot, lotto24, lotto, jackpot
+7) `173_sterne_sternzeichen_wochenhorosko...` remove: sternzeichen, wochenhoroskop, horoskop
+
+This allowed us to remove 724 articles, leaving us with 113'894 in the dataset. Results saved as `german_news_v3`
