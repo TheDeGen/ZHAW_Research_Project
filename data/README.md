@@ -221,7 +221,7 @@ Same methodology, we identified the following topics to remove:
 This allowed us to remove 67 articles, leaving us with 39'744 in the dataset. Results saved as `english_news_v13`
 
 ---
-# First German News Data Bacth Fetch and Cleanup
+# First German News Data Batch Fetch and Cleanup
 ## Step 1: Initial Data fetch
 Similar setup to pulling a broad amount of German news for 5 years. We do it in 2 steps, then combining both datasets. Sources remain the same for both steps.
 
