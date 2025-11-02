@@ -197,6 +197,21 @@ Same methodology, we identified the following topics to remove:
 
 This allowed us to remove 1'048 articles, leaving us with 40'775 in the dataset. Results saved as `english_news_v11`
 
+## Step 10: Eighth Cleanup Round
+Same methodology, we identified the following topics to remove:
+1) `7_execution_nitrogen_alabama_man` remove: inmate, prison
+2) `41_food_chicken_drinks_taste` remove: chicken, meat, bourbon
+3) `51_drug_fentanyl_birth_overdose` remove: fentanyl, drug, ocerdose, prescription, pills, opioid
+4) `55_podcast_aspect_understand_every` remove: podcast, sweeney
+5) `65_powerball_jackpot_drawing_winning` remove: jackpot, lottery, powerball
+6) `66_shop_best_favorite_sale`remove: lululemon, dyson
+7) `76_best_skin_shop_your ` remove: acne, skin, creams
+8) `97_cigarettes_tobacco_vapes_vaping` remove: cigarettes, vapes, vaping, nicotine
+10) `99_marijuana_cannabis_pot_legalize` remove: marijuana, cannabis, weed, drug
+
+
+This allowed us to remove 964 articles, leaving us with 39'811 in the dataset. Results saved as `english_news_v12`
+
 ---
 # First German News Data Bacth Fetch and Cleanup
 ## Step 1: Initial Data fetch
