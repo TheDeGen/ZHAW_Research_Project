@@ -210,7 +210,15 @@ Same methodology, we identified the following topics to remove:
 10) `99_marijuana_cannabis_pot_legalize` remove: marijuana, cannabis, weed, drug
 
 
-This allowed us to remove 964 articles, leaving us with 39'811 in the dataset. Results saved as `english_news_v12`
+This allowed us to remove 964 articles, leaving us with 39'810 in the dataset. Results saved as `english_news_v12`
+
+## Step 11: Nineth Cleanup Round
+Same methodology, we identified the following topics to remove:
+1) `69_aspect_podcast_understand_every` remove: podcast
+2) `83_medicaid_care_health_cuts` remove: medicaid, obamacare, medicare
+
+
+This allowed us to remove 67 articles, leaving us with 39'744 in the dataset. Results saved as `english_news_v13`
 
 ---
 # First German News Data Bacth Fetch and Cleanup
