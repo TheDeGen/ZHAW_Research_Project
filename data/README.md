@@ -176,6 +176,16 @@ We ran DeBERTa for zero-shot classification to quickly check our news ditributio
 
 This shows that about 23% of the data in `english_news_v9` is still a little irrelevant. We'll deal with this later though.
 
+## Step 6: Sixth Cleanup Round
+Same methodology, we identified the following topics to remove:
+1) `2_zoo_watch_species_bear` remove: zoo, bear, whale, shark
+2) `18_drug_drugs_weight_loss` remove: drugs, ozempic, diabetes, alzheimer
+3) `20_gun_school_lgbtq_marriage` remove: lgbtq, marriage
+4) `29_museum_auction_art_painting` remove: museum, art, painting
+5) `47_ufc_fight_seattle_252`remove: ufc
+
+This allowed us to remove 6'504 articles, leaving us with 41'823 in the dataset. Results saved as `english_news_v10`
+
 ---
 # First German News Data Bacth Fetch and Cleanup
 ## Step 1: Initial Data fetch
