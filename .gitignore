@@ -113,5 +113,8 @@ dmypy.json
 # CSV files
 *.csv
 
+# JSON files
+*.json
+
 # Miniforge (for OneDrive?)
 Miniforge3-MacOSX-arm64.sh
