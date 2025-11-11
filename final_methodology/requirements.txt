@@ -17,3 +17,5 @@ umap-learn
 xgboost
 pyarrow
 fsspec
+cupy-cuda12x; platform_system != "Darwin"
+cuml-cu12; platform_system != "Darwin"
