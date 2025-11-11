@@ -92,3 +92,41 @@ def plot_feature_importance(model, feature_names, model_name, top_n=20):
     plt.show()
 
     return importance_df
+
+
+def plot_cumulative_returns(
+    returns_map: dict[str, pd.Series],
+    title: str = "Cumulative Strategy Returns",
+    xlabel: str | None = None,
+    ylabel: str = "Cumulative Return"
+) -> None:
+    """
+    Plot cumulative returns for multiple strategies on a shared axis.
+
+    Args:
+        returns_map: Mapping of strategy label to return series.
+        title: Plot title.
+        xlabel: Optional x-axis label (auto-derived for datetime index).
+        ylabel: y-axis label.
+    """
+    plt.figure(figsize=(12, 6))
+    for name, returns in returns_map.items():
+        cumulative = returns.cumsum()
+        index = cumulative.index
+        if isinstance(index, pd.DatetimeIndex):
+            if index.tz is not None:
+                index = index.tz_convert(None)
+            x_values = index.to_pydatetime()
+        else:
+            x_values = np.arange(len(cumulative))
+        plt.plot(x_values, cumulative.values, label=name, linewidth=2)
+
+    plt.title(title)
+    plt.ylabel(ylabel)
+    if xlabel:
+        plt.xlabel(xlabel)
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    if isinstance(cumulative.index, pd.DatetimeIndex):
+        plt.gcf().autofmt_xdate()

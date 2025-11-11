@@ -16,6 +16,7 @@ from sklearn.decomposition import PCA
 from sklearn.linear_model import RidgeClassifierCV
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score, f1_score
+from sklearn.preprocessing import StandardScaler
 from joblib import Parallel, delayed
 
 from . import device_utils
@@ -587,6 +588,233 @@ def reduce_embeddings_gpu_first(
 
     print(f"Embedding reduction backend: {backend}")
     return reduced_df
+
+
+def precompute_time_decay_feature_sets(
+    news_df: pd.DataFrame,
+    master_df: pd.DataFrame,
+    lookback_windows: list[int],
+    decay_lambdas: list[float],
+    n_components: int = 20,
+    use_umap: bool = True,
+    random_state: int = 42,
+    device_config: dict | None = None,
+    verbose: bool = True,
+) -> dict[tuple[int, float], dict[str, pd.DataFrame]]:
+    """
+    Precompute time-decayed topic counts and reduced embeddings for a grid of parameters.
+
+    Args:
+        news_df: Preprocessed news dataframe with zero-shot classifications and embeddings.
+        master_df: Master dataframe aligned with target timestamps.
+        lookback_windows: List of lookback windows (in hours) to evaluate.
+        decay_lambdas: List of exponential decay parameters.
+        n_components: Number of components for dimensionality reduction.
+        use_umap: Whether to use UMAP (otherwise PCA) for reduction.
+        random_state: Random seed for reproducibility.
+        device_config: Optional device configuration for logging downstream usage.
+        verbose: Print progress information.
+
+    Returns:
+        Dictionary keyed by (lookback_window, decay_lambda) tuples containing:
+            {
+                'td_topics': DataFrame,
+                'td_embeddings': DataFrame
+            }
+    """
+    if not isinstance(master_df.index, pd.DatetimeIndex):
+        raise ValueError("master_df must have a DatetimeIndex for time-based aggregation.")
+
+    feature_cache: dict[tuple[int, float], dict[str, pd.DataFrame]] = {}
+    total_combinations = len(lookback_windows) * len(decay_lambdas)
+
+    if verbose:
+        print(f"Precomputing time-decayed features for {total_combinations} parameter combinations...")
+
+    combination_idx = 0
+    for lookback in lookback_windows:
+        for decay_lambda in decay_lambdas:
+            combination_idx += 1
+            params_key = (lookback, decay_lambda)
+            if verbose:
+                print(
+                    f"[{combination_idx}/{total_combinations}] "
+                    f"lookback={lookback}h, decay_lambda={decay_lambda}"
+                )
+
+            td_topics = compute_time_decayed_topic_counts(
+                news_df=news_df,
+                master_df=master_df,
+                lookback_window=lookback,
+                decay_lambda=decay_lambda,
+                verbose=False,
+            )
+
+            weighted_embeddings = compute_time_decayed_embeddings(
+                news_df=news_df,
+                master_df=master_df,
+                lookback_window=lookback,
+                decay_lambda=decay_lambda,
+                verbose=False,
+            )
+
+            # Handle NaNs prior to dimensionality reduction (mirror notebook logic)
+            nan_mask = np.isnan(weighted_embeddings).any(axis=1)
+            embeddings_clean = weighted_embeddings.copy()
+            embeddings_clean[nan_mask] = 0.0
+
+            cache_label = f"td_embeddings_lw{lookback}_dl{decay_lambda}"
+            td_embeddings = reduce_embeddings_gpu_first(
+                embeddings=embeddings_clean,
+                index=master_df.index,
+                cache_label=cache_label,
+                n_components=n_components,
+                use_umap=use_umap,
+                random_state=random_state,
+            )
+
+            feature_cache[params_key] = {
+                "td_topics": td_topics,
+                "td_embeddings": td_embeddings,
+            }
+
+    return feature_cache
+
+
+def assemble_time_decay_datasets(
+    master_df: pd.DataFrame,
+    feature_cache: dict[tuple[int, float], dict[str, pd.DataFrame]],
+    target_column: str,
+    train_ratio: float,
+    val_ratio: float,
+    test_ratio: float,
+    dataset_prefix: str = "dataset",
+) -> dict[tuple[int, float], dict[str, pd.DataFrame | list[str] | str]]:
+    """
+    Merge precomputed time-decay features with the master dataframe and build dataset splits.
+
+    Args:
+        master_df: Baseline feature dataframe containing the target column.
+        feature_cache: Output of precompute_time_decay_feature_sets.
+        target_column: Name of the target column to retain.
+        train_ratio: Training set proportion (0-1).
+        val_ratio: Validation set proportion (0-1).
+        test_ratio: Test set proportion (0-1).
+        dataset_prefix: Prefix for generated dataset names.
+
+    Returns:
+        Dictionary keyed by parameter tuples with train/val/test splits and metadata.
+    """
+    ratio_total = train_ratio + val_ratio + test_ratio
+    if not np.isclose(ratio_total, 1.0):
+        raise ValueError(
+            f"Split ratios must sum to 1.0 (received {train_ratio}, {val_ratio}, {test_ratio})"
+        )
+
+    preprocessed_datasets: dict[tuple[int, float], dict[str, pd.DataFrame | list[str] | str]] = {}
+
+    for idx, (params_key, feature_dict) in enumerate(feature_cache.items(), start=1):
+        lookback, decay_lambda = params_key
+        dataset_name = f"{dataset_prefix}_lw{lookback}_dl{decay_lambda}"
+
+        td_topics_df = feature_dict["td_topics"]
+        td_embeddings_df = feature_dict["td_embeddings"]
+
+        merged_features = master_df.join([td_topics_df, td_embeddings_df], how="left")
+        model_df = merged_features.dropna(subset=[target_column]).copy()
+        if model_df.empty:
+            raise ValueError(
+                f"No samples remain after dropping NaNs for params {params_key}. "
+                "Check data coverage and target calculation."
+            )
+
+        num_samples = len(model_df)
+        train_end = int(num_samples * train_ratio)
+        val_end = train_end + int(num_samples * val_ratio)
+
+        if train_end == 0 or val_end == train_end or val_end >= num_samples:
+            raise ValueError(
+                f"Invalid split sizes for dataset {dataset_name} "
+                f"(train_end={train_end}, val_end={val_end}, total={num_samples})."
+            )
+
+        train_df = model_df.iloc[:train_end].copy()
+        val_df = model_df.iloc[train_end:val_end].copy()
+        test_df = model_df.iloc[val_end:].copy()
+
+        topic_features = td_topics_df.columns.tolist()
+        embedding_features = td_embeddings_df.columns.tolist()
+        news_features = topic_features + embedding_features
+
+        preprocessed_datasets[params_key] = {
+            "dataset_name": dataset_name,
+            "train_df": train_df,
+            "val_df": val_df,
+            "test_df": test_df,
+            "news_features": news_features,
+            "topic_features": topic_features,
+            "embedding_features": embedding_features,
+        }
+
+    return preprocessed_datasets
+
+
+def scale_preprocessed_datasets(
+    preprocessed_datasets: dict[tuple[int, float], dict[str, pd.DataFrame | list[str] | str]],
+    scaler_factory=StandardScaler,
+    suffix: str = "_scaled",
+) -> dict[tuple[int, float], dict[str, pd.DataFrame | list[str] | str]]:
+    """
+    Standardise news-derived features for each dataset split and record scaler metadata.
+
+    Args:
+        preprocessed_datasets: Datasets produced by assemble_time_decay_datasets.
+        scaler_factory: Callable returning a fitted scaler (defaults to sklearn StandardScaler).
+        suffix: Suffix appended to scaled news feature names.
+
+    Returns:
+        Updated preprocessed_datasets with scaled feature columns and scaler references.
+    """
+    for params_key, data_dict in preprocessed_datasets.items():
+        news_features = data_dict.get("news_features", [])
+        if not news_features:
+            data_dict["scaled_news_features"] = []
+            data_dict["scaler_news"] = None
+            continue
+
+        scaler = scaler_factory()
+        train_df = data_dict["train_df"].copy()
+        val_df = data_dict["val_df"].copy()
+        test_df = data_dict["test_df"].copy()
+
+        train_values = train_df[news_features].fillna(0.0).to_numpy(dtype=np.float32, copy=True)
+        scaler.fit(train_values)
+
+        scaled_feature_names = [f"{feature}{suffix}" for feature in news_features]
+
+        def _apply_scaler(frame: pd.DataFrame) -> pd.DataFrame:
+            values = frame[news_features].fillna(0.0).to_numpy(dtype=np.float32, copy=True)
+            transformed = scaler.transform(values)
+            transformed_df = pd.DataFrame(
+                transformed,
+                index=frame.index,
+                columns=scaled_feature_names,
+            )
+            updated = frame.copy()
+            # Drop existing scaled columns if function is invoked multiple times
+            for col in scaled_feature_names:
+                if col in updated.columns:
+                    updated = updated.drop(columns=[col])
+            updated[scaled_feature_names] = transformed_df
+            return updated
+
+        data_dict["train_df"] = _apply_scaler(train_df)
+        data_dict["val_df"] = _apply_scaler(val_df)
+        data_dict["test_df"] = _apply_scaler(test_df)
+        data_dict["scaled_news_features"] = scaled_feature_names
+        data_dict["scaler_news"] = scaler
+
+    return preprocessed_datasets
 
 
 def evaluate_single_parameter_combination(

@@ -7,7 +7,10 @@ XGBoost and LightGBM model training utilities.
 import numpy as np
 import pandas as pd
 from xgboost import XGBClassifier
-from sklearn.model_selection import RandomizedSearchCV
+from lightgbm import LGBMClassifier
+from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
+
+from config import model_config
 
 
 class ExpandingWindowSplitter:
@@ -214,3 +217,88 @@ def run_xgb_random_search(
 
     search.fit(X_train, y_train)
     return search, feature_columns
+
+
+def build_lgbm_classifier(
+    num_classes: int = 3,
+    random_state: int = 42,
+    device_config: dict | None = None,
+    base_params: dict | None = None,
+) -> LGBMClassifier:
+    """
+    Build a LightGBM classifier configured for CPU/GPU execution.
+
+    Args:
+        num_classes: Number of target classes.
+        random_state: Random seed for reproducibility.
+        device_config: Optional device configuration dict.
+        base_params: Optional base parameter overrides.
+
+    Returns:
+        Configured LGBMClassifier.
+    """
+    params = (base_params or model_config.LIGHTGBM_BASE_PARAMS).copy()
+    params.update({
+        "num_class": num_classes,
+        "random_state": random_state,
+    })
+
+    if device_config is None:
+        params.setdefault("n_jobs", -1)
+        params.setdefault("device_type", "cpu")
+    else:
+        params["n_jobs"] = device_config.get("n_jobs", -1)
+        params["device_type"] = "gpu" if device_config.get("lgbm_device") == "gpu" else "cpu"
+
+    return LGBMClassifier(**params)
+
+
+def run_lgbm_grid_search(
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    param_grid: dict | None = None,
+    cv: object | None = None,
+    scoring: str = "f1_macro",
+    device_config: dict | None = None,
+    random_state: int = 42,
+    verbose: int = 1,
+) -> GridSearchCV:
+    """
+    Run GridSearchCV for a LightGBM classifier.
+
+    Args:
+        X_train: Training features.
+        y_train: Training labels.
+        param_grid: Parameter grid for GridSearchCV.
+        cv: Cross-validation splitter.
+        scoring: Scoring metric.
+        device_config: Optional device configuration dict.
+        random_state: Random seed.
+        verbose: Verbosity level for GridSearchCV.
+
+    Returns:
+        Fitted GridSearchCV object.
+    """
+    param_grid = param_grid or model_config.LIGHTGBM_PARAM_GRID
+    y_array = np.asarray(y_train)
+    estimator = build_lgbm_classifier(
+        num_classes=int(np.unique(y_array).size),
+        random_state=random_state,
+        device_config=device_config,
+    )
+
+    n_jobs = device_config.get("n_jobs", -1) if device_config else -1
+
+    grid = GridSearchCV(
+        estimator=estimator,
+        param_grid=param_grid,
+        scoring=scoring,
+        cv=cv,
+        n_jobs=n_jobs,
+        verbose=verbose,
+        refit=True,
+        return_train_score=True,
+    )
+
+    grid.fit(X_train, y_train)
+    return grid

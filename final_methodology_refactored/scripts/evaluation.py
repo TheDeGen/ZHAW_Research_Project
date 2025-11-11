@@ -232,6 +232,79 @@ def actions_to_returns(actions: np.ndarray, spread: pd.Series) -> pd.Series:
     return pd.Series(returns, index=spread.index)
 
 
+def summarise_returns(
+    returns: pd.Series,
+    strategy_label: str,
+    periods_per_year: int = 24 * 365
+) -> dict[str, float | str]:
+    """
+    Summarise key performance statistics for a strategy's return series.
+
+    Args:
+        returns: Strategy return series.
+        strategy_label: Name of the strategy.
+        periods_per_year: Annualisation factor (default assumes hourly data).
+
+    Returns:
+        Dictionary containing strategy statistics.
+    """
+    cumulative = returns.cumsum()
+    drawdown = cumulative - cumulative.cummax()
+    mean_return = returns.mean()
+    volatility = returns.std(ddof=1)
+    sharpe = (mean_return / volatility * np.sqrt(periods_per_year)) if volatility > 0 else np.nan
+
+    return {
+        "Strategy": strategy_label,
+        "Total Return": cumulative.iloc[-1] if not cumulative.empty else 0.0,
+        "Average Return": mean_return,
+        "Volatility": volatility,
+        "Sharpe (annualised)": sharpe,
+        "Max Drawdown": drawdown.min() if not drawdown.empty else 0.0,
+    }
+
+
+def compute_strategy_returns(
+    action_map: dict[str, np.ndarray],
+    spread: pd.Series
+) -> dict[str, pd.Series]:
+    """
+    Convert a mapping of strategy actions to return series.
+
+    Args:
+        action_map: Mapping from strategy name to action array.
+        spread: Price spread series.
+
+    Returns:
+        Mapping from strategy name to return series.
+    """
+    return {
+        name: actions_to_returns(actions, spread)
+        for name, actions in action_map.items()
+    }
+
+
+def summarise_strategy_set(
+    returns_map: dict[str, pd.Series],
+    periods_per_year: int = 24 * 365
+) -> pd.DataFrame:
+    """
+    Summarise multiple strategies into a DataFrame.
+
+    Args:
+        returns_map: Mapping of strategy name to return series.
+        periods_per_year: Annualisation factor for Sharpe ratio.
+
+    Returns:
+        DataFrame indexed by strategy with summary metrics.
+    """
+    summaries = [
+        summarise_returns(series, name, periods_per_year)
+        for name, series in returns_map.items()
+    ]
+    return pd.DataFrame(summaries).set_index("Strategy")
+
+
 def get_column_name(possible_names: list, df: pd.DataFrame) -> str | None:
     """
     Return the first matching name in possible_names that exists in df.columns.
