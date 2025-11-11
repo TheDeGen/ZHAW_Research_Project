@@ -1,0 +1,378 @@
+# Energy Price Prediction Pipeline - Refactored
+
+This is a modular, production-ready implementation of the energy price prediction pipeline. The original monolithic notebook (`final_v3.ipynb`) has been refactored into reusable Python modules with a clean, streamlined notebook interface.
+
+## Overview
+
+This pipeline predicts 24-hour ahead energy price movements (Long/Neutral/Short) using:
+- **News signals**: German energy news classified and embedded using NLP models
+- **Time-decay aggregation**: Exponentially weighted aggregation of news signals
+- **Energy market features**: Price, load, and temporal features
+- **Machine learning**: XGBoost and LightGBM classifiers with hyperparameter optimization
+
+## Project Structure
+
+```
+final_methodology_refactored/
+├── config/
+│   ├── __init__.py
+│   ├── pipeline_config.py      # All configurable parameters
+│   └── model_config.py          # Model-specific configurations
+│
+├── scripts/
+│   ├── __init__.py
+│   ├── device_utils.py          # GPU/CPU detection, resource management
+│   ├── profiling.py             # Performance profiling and telemetry
+│   ├── data_ingestion.py        # Data loading and preprocessing
+│   ├── feature_engineering.py   # NLP, embeddings, time-decay features
+│   ├── model_utils.py           # XGBoost/LightGBM model training
+│   ├── evaluation.py            # Metrics, bootstrap CIs, statistical tests
+│   └── visualization.py         # Plotting functions
+│
+├── notebooks/
+│   └── pipeline_execution.ipynb # Clean, streamlined execution notebook
+│
+├── data/                        # Place your data files here
+│   ├── german_news_v1.csv
+│   └── energy_baseline.csv
+│
+├── outputs/                     # Model outputs and artifacts
+│   └── .cache/                  # Embedding and feature caches
+│
+└── README.md                    # This file
+```
+
+## Key Benefits
+
+### 1. **Maintainability**
+- Functions organized by purpose in separate modules
+- Easy to locate, debug, and test specific functionality
+- Clear separation of concerns
+
+### 2. **Reusability**
+- All functions can be imported and used in other projects
+- No code duplication
+- Modular design allows mixing and matching components
+
+### 3. **Configurability**
+- All parameters centralized in `config/pipeline_config.py`
+- Easy to modify without touching code
+- Configuration inheritance and overrides supported
+
+### 4. **Performance**
+- GPU-aware device detection and optimization
+- Embedding and feature caching to disk
+- Parallel processing where applicable
+- Resource profiling for bottleneck identification
+
+### 5. **Notebook Simplicity**
+- Reduced from 122 cells (~4000 lines) to ~25 cells (~300 lines)
+- Focus on results and outputs, not implementation
+- Clear, step-by-step execution flow
+
+## Quick Start
+
+### 1. Install Dependencies
+
+```bash
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install required packages
+pip install pandas numpy scikit-learn xgboost lightgbm
+pip install torch transformers sentence-transformers
+pip install matplotlib seaborn tqdm umap-learn
+pip install pyarrow  # For caching
+
+# Optional: GPU acceleration
+pip install cupy-cuda11x  # For NVIDIA GPUs
+pip install pynvml psutil  # For resource monitoring
+```
+
+### 2. Prepare Data
+
+Place your data files in the `data/` directory:
+- `german_news_v1.csv` - News articles with title, description, publishedAt
+- `energy_baseline.csv` - Energy market data with price, load, timestamp
+
+### 3. Run the Pipeline
+
+Open `notebooks/pipeline_execution.ipynb` in Jupyter and run cells sequentially.
+
+### 4. Customize Parameters (Optional)
+
+Edit `config/pipeline_config.py` to modify:
+- Time-decay parameters (λ, lookback window)
+- Target definition (spread deadband)
+- Cross-validation settings
+- Grid search ranges
+- Model hyperparameters
+
+## Module Documentation
+
+### config/pipeline_config.py
+Central configuration file containing:
+- Time-series parameters (forecast horizon, lookback window)
+- Feature engineering parameters (time decay, PCA components)
+- Dataset split ratios (train/val/test)
+- Cross-validation settings
+- NLP configuration (embedding model, topic labels)
+- XGBoost hyperparameter distributions
+- Data paths
+
+**Key Parameters:**
+- `FORECAST_HORIZON_HOURS = 24` - Prediction horizon
+- `DEFAULT_LOOKBACK_WINDOW = 336` - News lookback (2 weeks)
+- `DEFAULT_DECAY_LAMBDA = 0.05` - Time decay rate
+- `SPREAD_TARGET_DEADBAND = 5.0` - Neutral class threshold (EUR/MWh)
+
+### scripts/device_utils.py
+**Functions:**
+- `detect_compute_device()` - Auto-detect GPU/CPU and recommend batch sizes
+- `ensure_tensor_device()` - Move tensors to specified device
+- `resolve_hf_device()` - Resolve device for HuggingFace models
+
+**Usage:**
+```python
+from scripts import device_utils
+device_config = device_utils.detect_compute_device(task='embeddings', verbose=True)
+```
+
+### scripts/profiling.py
+**Classes:**
+- `StageProfiler` - Context manager for resource monitoring
+
+**Usage:**
+```python
+from scripts import profiling
+with profiling.StageProfiler("Data Loading", device_config):
+    # Your code here
+    pass
+```
+
+### scripts/data_ingestion.py
+**Functions:**
+- `run_ingestion_stage()` - Load and preprocess news and energy data
+
+**Returns:**
+- `news_df` - Preprocessed news dataframe
+- `energy_df` - Preprocessed energy dataframe
+- `master_df` - Master feature dataframe with target variable
+
+### scripts/feature_engineering.py
+**Main Functions:**
+- `run_embedding_stage()` - Zero-shot topic classification
+- `compute_embeddings()` - Generate sentence embeddings (cached)
+- `compute_time_decayed_topic_counts()` - Time-weighted topic aggregation
+- `compute_time_decayed_embeddings()` - Time-weighted embedding aggregation
+- `reduce_embeddings_gpu_first()` - UMAP/PCA dimensionality reduction (cached)
+- `grid_search_time_decay_params()` - Parameter optimization using Ridge CV
+
+**Key Features:**
+- Disk caching for embeddings and reduced features
+- GPU-first computation with CPU fallback
+- Efficient binary search for time-window lookups
+
+### scripts/model_utils.py
+**Classes:**
+- `ExpandingWindowSplitter` - Custom time-series CV splitter
+
+**Functions:**
+- `build_xgb_classifier()` - Build XGBoost classifier with device optimization
+- `run_xgb_random_search()` - Hyperparameter tuning with RandomizedSearchCV
+- `map_target_to_binary()` - Convert 3-class to binary target
+
+### scripts/evaluation.py
+**Functions:**
+- `bootstrap_confidence_interval()` - Bootstrap 95% CIs for metrics
+- `compare_models_statistically()` - McNemar's test for model comparison
+- `_safe_multiclass_auc()` - Robust multiclass AUC computation
+- `actions_to_returns()` - Convert trading signals to returns
+- `get_column_name()` - Helper for flexible column matching
+
+### scripts/visualization.py
+**Functions:**
+- `plot_confusion_matrices()` - Side-by-side confusion matrices
+- `plot_feature_importance()` - Bar plot of top features
+
+## Pipeline Stages
+
+### Stage 1: Data Ingestion
+- Load news and energy data
+- Create target variable (3-class spread classification)
+- Generate temporal features (hour, day, week, month)
+- Create lagged features (24h, 168h lags)
+
+### Stage 2: News Processing
+**2A. Topic Classification**
+- Zero-shot classification using German energy topics
+- Batch processing with GPU acceleration
+- Re-classification of "other" articles using descriptions
+
+**2B. Sentence Embeddings**
+- Generate 384-dim embeddings using multilingual MiniLM
+- GPU-accelerated inference (fp16 on CUDA)
+- Disk caching for reuse
+
+### Stage 3: Feature Engineering
+**3A. Time-Decayed Topic Counts**
+- Exponential time decay: `weight = exp(-λ * hours_since)`
+- Vectorized computation across timestamps
+- Separate weighted count per topic
+
+**3B. Time-Decayed Embeddings**
+- Weighted average of embeddings in time window
+- Binary search for efficient time-range queries
+- Same decay formula as topics
+
+**3C. Dimensionality Reduction**
+- Reduce 384-dim embeddings to 50-dim
+- GPU-first UMAP (cuML) with CPU fallback
+- Disk caching with checksum validation
+
+### Stage 4: Parameter Optimization (Optional)
+- Grid search over (lookback_window, decay_lambda) combinations
+- Ridge classifier with expanding-window CV
+- Parallel evaluation using joblib
+- Rank by validation accuracy
+
+### Stage 5: Model Training
+- XGBoost RandomizedSearchCV
+- Expanding-window time-series CV
+- GPU acceleration when available
+- Hyperparameter distributions from config
+
+### Stage 6: Evaluation
+- Confusion matrices
+- Classification reports
+- Feature importance plots
+- Bootstrap confidence intervals
+- McNemar's test for model comparison
+
+## Configuration Examples
+
+### Modify Time-Decay Parameters
+```python
+# In config/pipeline_config.py or notebook
+DEFAULT_LOOKBACK_WINDOW = 504  # 3 weeks instead of 2
+DEFAULT_DECAY_LAMBDA = 0.01    # Slower decay
+```
+
+### Change Data Splits
+```python
+TRAIN_RATIO = 0.6
+VAL_RATIO = 0.3
+TEST_RATIO = 0.1
+```
+
+### Adjust Cross-Validation
+```python
+N_CV_SPLITS = 3          # Fewer splits for faster iteration
+CV_STEP_SIZE_HOURS = 48  # Larger step size
+```
+
+### Modify Grid Search Ranges
+```python
+LOOKBACK_WINDOWS = [168, 336, 504, 672]  # 1, 2, 3, 4 weeks
+TIME_DECAY_LAMBDAS = [0.001, 0.01, 0.05, 0.1, 0.2]
+```
+
+## Performance Tips
+
+### 1. Use Caching
+- First run generates embeddings and caches to disk
+- Subsequent runs load from cache (much faster)
+- Cache invalidated automatically on data changes
+
+### 2. GPU Acceleration
+- Install CUDA toolkit and cupy for NVIDIA GPUs
+- Models automatically detect and use GPU
+- Batch sizes auto-adjusted based on GPU memory
+
+### 3. Parallel Processing
+- joblib parallelizes grid search and Ridge CV
+- Set `n_jobs=-1` to use all cores
+- GPU-accelerated models use `n_jobs=1` (GPU handles parallelism)
+
+### 4. Memory Management
+- Process data in batches for large datasets
+- Use `news_sample` parameter for quick testing
+- Clear GPU cache after heavy operations
+
+## Troubleshooting
+
+### Import Errors
+```python
+# Add parent directory to path
+import sys
+sys.path.insert(0, str(Path('../scripts').parent.resolve()))
+```
+
+### GPU Not Detected
+- Check CUDA installation: `torch.cuda.is_available()`
+- Install correct PyTorch version for your CUDA version
+- Apple Silicon: Use MPS backend (automatic)
+
+### Out of Memory
+- Reduce batch size in config
+- Use smaller PCA components
+- Process fewer news articles for testing
+
+### Slow Embeddings
+- Check if GPU is being used
+- Ensure caching is working (check `.cache/embeddings/`)
+- Reduce batch size if GPU memory is limited
+
+## Extending the Pipeline
+
+### Add New Features
+1. Create function in appropriate module (e.g., `feature_engineering.py`)
+2. Import in notebook
+3. Call function and merge with `feature_df`
+
+### Add New Models
+1. Create training function in `model_utils.py`
+2. Add configuration to `model_config.py`
+3. Call from notebook
+
+### Custom Evaluation Metrics
+1. Add metric function to `evaluation.py`
+2. Use with `bootstrap_confidence_interval()`
+
+## Comparison with Original Notebook
+
+| Aspect | Original (`final_v3.ipynb`) | Refactored |
+|--------|---------------------------|-----------|
+| **Lines of code** | ~4000 | ~300 (notebook) + ~2000 (modules) |
+| **Notebook cells** | 122 | ~25 |
+| **Configuration** | Scattered | Centralized |
+| **Reusability** | Low (copy-paste) | High (import) |
+| **Testability** | Difficult | Easy |
+| **Maintainability** | Low | High |
+| **Git diff clarity** | Poor | Excellent |
+| **IDE support** | Limited | Full |
+
+## Citation
+
+If you use this pipeline in your research, please cite:
+```
+@software{energy_price_prediction_pipeline,
+  title={Energy Price Prediction Pipeline with News Signals},
+  author={ZHAW AREP Team},
+  year={2025},
+  note={Modular ML pipeline for energy market forecasting}
+}
+```
+
+## License
+
+[Add your license here]
+
+## Contact
+
+For questions or issues, please contact [your contact information]
+
+---
+
+**Happy modeling! 🚀**
