@@ -116,5 +116,7 @@ dmypy.json
 # JSON files
 *.json
 
-# Miniforge (for OneDrive?)
-Miniforge3-MacOSX-arm64.sh
+.claude
+
+# ds store
+.DS_Store
