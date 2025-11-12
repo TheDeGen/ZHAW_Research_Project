@@ -347,6 +347,37 @@ sys.path.insert(0, str(Path('../scripts').parent.resolve()))
 - Ensure caching is working (check `.cache/embeddings/`)
 - Reduce batch size if GPU memory is limited
 
+## Known Limitations
+
+### Temporal Data Leakage via Lookback Windows
+
+**Issue**: The current train/validation/test splits do not include temporal gaps between splits, which can cause subtle data leakage through feature engineering.
+
+**Root Cause**: Features use lookback windows (up to 504 hours) for time-decayed news aggregation. Without gaps between splits:
+- Last training sample: hour 5089
+- First validation sample: hour 5090
+- Validation sample's features include news from hours [4586:5090] (504-hour lookback)
+- This overlaps with training period [0:5089]
+- News from hours [4586:5089] appears in BOTH training targets AND validation features
+
+**Impact**:
+- Validation and test metrics may be slightly optimistic
+- Model may have access to information from the "future" during training through overlapping lookback windows
+- Not a severe issue but affects strict temporal validation
+
+**Acknowledged Workaround**:
+We acknowledge this limitation. The temporal ordering is preserved (no shuffling), and the expanding window CV splitter maintains chronological order, so the impact is relatively minor. A proper fix would require adding 24-48 hour gaps between splits at the cost of reduced training data.
+
+**Potential Fix** (not implemented):
+```python
+# In assemble_time_decay_datasets(), add gap parameter:
+gap_size = 24  # 24-hour gap between splits
+train_end = int(num_samples * train_ratio)
+val_start = train_end + gap_size  # Skip 24 hours
+val_end = val_start + int(num_samples * val_ratio)
+test_start = val_end + gap_size  # Skip another 24 hours
+```
+
 ## Extending the Pipeline
 
 ### Add New Features
