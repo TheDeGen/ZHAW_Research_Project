@@ -358,3 +358,60 @@ def get_column_name(possible_names: list, df: pd.DataFrame) -> str | None:
         if name in df.columns:
             return name
     return None
+
+
+def setup_backtest_strategies(
+    test_df: pd.DataFrame,
+    signal_predictions: np.ndarray,
+    baseline_predictions: np.ndarray,
+    label_encoder=None
+) -> tuple[pd.Series, dict[str, np.ndarray]]:
+    """
+    Set up backtesting strategies and compute spread series.
+
+    Args:
+        test_df: Test dataframe with price columns
+        signal_predictions: Signal model predictions (encoded or decoded)
+        baseline_predictions: Baseline model predictions (encoded or decoded)
+        label_encoder: Optional label encoder to decode predictions
+
+    Returns:
+        Tuple of (spread_series, strategy_actions_dict)
+    """
+    # Resolve column names
+    spot_col = get_column_name(
+        ["Spot Price", "spot_price", "SpotPrice"],
+        test_df
+    )
+    day_ahead_col = get_column_name(
+        ["Day Ahead Auction", "day_ahead_price", "DayAhead"],
+        test_df
+    )
+
+    if spot_col is None or day_ahead_col is None:
+        raise KeyError(
+            f"Could not identify spot or day-ahead price columns. "
+            f"Available columns: {list(test_df.columns)}"
+        )
+
+    # Extract price series and compute spread
+    spot_series = test_df[spot_col]
+    day_ahead_series = test_df[day_ahead_col]
+    spread_series = spot_series - day_ahead_series
+
+    # Decode predictions if encoder provided
+    if label_encoder is not None:
+        signal_decoded = label_encoder.inverse_transform(signal_predictions)
+        baseline_decoded = label_encoder.inverse_transform(baseline_predictions)
+    else:
+        signal_decoded = signal_predictions
+        baseline_decoded = baseline_predictions
+
+    # Create strategy actions
+    strategy_actions = {
+        "LightGBM Signal (with news)": signal_decoded,
+        "LightGBM Baseline (price-only)": baseline_decoded,
+        "Naive Buy-DA/Sell-Spot": np.ones_like(signal_decoded, dtype=int),
+    }
+
+    return spread_series, strategy_actions

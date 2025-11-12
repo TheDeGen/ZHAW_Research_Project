@@ -155,8 +155,8 @@ XGB_PARAM_DISTRIBUTIONS = {
 # ============================================================================
 
 # Time decay parameter grid
-LOOKBACK_WINDOWS = [168, 336, 504]  # 1, 2, 3 weeks
-TIME_DECAY_LAMBDAS = [0.01, 0.05, 0.1]
+LOOKBACK_WINDOWS = [24, 48, 72, 168, 336, 504]  # 1, 2, 3 weeks
+TIME_DECAY_LAMBDAS = [0.01, 0.05, 0.1, 0.25, 0.5]
 
 # ============================================================================
 # DATA PATHS

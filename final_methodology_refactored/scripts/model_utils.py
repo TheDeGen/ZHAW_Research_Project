@@ -822,3 +822,323 @@ def optimize_classification_threshold(
     print(f"{'='*70}\n")
 
     return optimal_threshold, best_score
+
+
+def train_xgb_candidates(
+    top_combinations: list[dict],
+    preprocessed_datasets: dict,
+    baseline_features: list,
+    target_column: str,
+    param_distributions: dict,
+    n_iter: int,
+    random_state: int,
+    n_splits: int,
+    step_size: int,
+    min_train_size: int,
+    device_config: dict,
+    fallback_params_key: tuple | None = None,
+    fallback_dataset: dict | None = None
+) -> dict:
+    """
+    Train and evaluate XGBoost models for multiple parameter combinations.
+
+    Args:
+        top_combinations: List of dicts with 'params_key', 'dataset_name', 'lookback_window', 'decay_lambda'
+        preprocessed_datasets: Dictionary mapping params_key to dataset dicts
+        baseline_features: List of baseline feature names
+        target_column: Name of target column
+        param_distributions: Parameter distributions for XGBoost random search
+        n_iter: Number of random search iterations
+        random_state: Random seed
+        n_splits: Number of CV splits
+        step_size: Step size for expanding window
+        min_train_size: Minimum training size
+        device_config: Device configuration dict
+        fallback_params_key: Optional fallback params key if no candidates provided
+        fallback_dataset: Optional fallback dataset if no candidates provided
+
+    Returns:
+        Dictionary containing:
+            - 'tuning_runs': List of tuning run summaries
+            - 'best_models': Dict mapping params_key to fitted model
+            - 'feature_columns': Dict mapping params_key to feature column lists
+            - 'label_encoders': Dict mapping params_key to label encoders
+            - 'best_run': Best run summary dict
+            - 'best_params_key': Best params key
+            - 'best_model': Best fitted model
+            - 'best_feature_columns': Best feature columns
+            - 'best_label_encoder': Best label encoder
+            - 'best_dataset': Best dataset dict
+    """
+    from sklearn.metrics import accuracy_score, f1_score
+
+    # Handle fallback if no candidates
+    if not top_combinations:
+        print("⚠ No candidates provided; falling back to sample dataset.")
+        if fallback_params_key is None or fallback_dataset is None:
+            raise ValueError("Fallback dataset and params_key required when no candidates provided")
+        top_combinations = [{
+            "params_key": fallback_params_key,
+            "dataset_name": fallback_dataset["dataset_name"],
+            "lookback_window": fallback_params_key[0],
+            "decay_lambda": fallback_params_key[1],
+        }]
+
+    tuning_runs = []
+    best_models = {}
+    feature_columns_dict = {}
+    label_encoders = {}
+
+    for rank, result in enumerate(top_combinations, start=1):
+        params_key = result["params_key"]
+        dataset = preprocessed_datasets[params_key]
+
+        data_dict = {
+            "train_df": dataset["train_df"],
+            "scaled_news_features": dataset["scaled_news_features"],
+        }
+
+        # Run XGBoost random search
+        search, feature_columns, label_encoder = run_xgb_random_search(
+            data_dict=data_dict,
+            baseline_features=baseline_features,
+            target_column=target_column,
+            param_distributions=param_distributions,
+            n_iter=n_iter,
+            random_state=random_state,
+            n_splits=n_splits,
+            step_size=step_size,
+            min_train_size=min_train_size,
+            device_config=device_config,
+        )
+
+        best_estimator = search.best_estimator_
+        val_df = dataset["val_df"]
+        X_val = val_df[feature_columns].fillna(0)
+        y_val = label_encoder.transform(val_df[target_column].astype(int))
+        val_pred = best_estimator.predict(X_val)
+
+        val_accuracy = accuracy_score(y_val, val_pred)
+        val_macro_f1 = f1_score(y_val, val_pred, average="macro", zero_division=0)
+
+        run_summary = {
+            "rank": rank,
+            "params_key": params_key,
+            "dataset_name": dataset["dataset_name"],
+            "lookback_window": result.get("lookback_window", params_key[0]),
+            "decay_lambda": result.get("decay_lambda", params_key[1]),
+            "best_cv_macro_f1": search.best_score_,
+            "val_accuracy": val_accuracy,
+            "val_macro_f1": val_macro_f1,
+            "best_params": search.best_params_,
+            "feature_columns": feature_columns,
+            "search": search,
+            "label_encoder": label_encoder,
+        }
+
+        tuning_runs.append(run_summary)
+        best_models[params_key] = best_estimator
+        feature_columns_dict[params_key] = feature_columns
+        label_encoders[params_key] = label_encoder
+
+        print(
+            f"#{rank} {dataset['dataset_name']} → "
+            f"CV F1={search.best_score_:.3f}, "
+            f"Val Acc={val_accuracy:.3f}, "
+            f"Val Macro-F1={val_macro_f1:.3f}"
+        )
+
+    # Select best run
+    best_run = max(tuning_runs, key=lambda r: (r["best_cv_macro_f1"], r["val_macro_f1"]))
+    best_params_key = best_run["params_key"]
+    best_model = best_models[best_params_key]
+    best_feature_columns = feature_columns_dict[best_params_key]
+    best_label_encoder = label_encoders[best_params_key]
+    best_dataset = preprocessed_datasets[best_params_key]
+
+    print(
+        f"\n✓ Selected XGBoost dataset {best_run['dataset_name']} "
+        f"(lookback={best_run['lookback_window']}h, lambda={best_run['decay_lambda']})"
+    )
+    print(f"  Best CV macro-F1: {best_run['best_cv_macro_f1']:.3f}")
+    print(f"  Validation macro-F1: {best_run['val_macro_f1']:.3f}")
+    print(f"  XGBoost classes: {best_label_encoder.classes_}")
+
+    return {
+        "tuning_runs": tuning_runs,
+        "best_models": best_models,
+        "feature_columns": feature_columns_dict,
+        "label_encoders": label_encoders,
+        "best_run": best_run,
+        "best_params_key": best_params_key,
+        "best_model": best_model,
+        "best_feature_columns": best_feature_columns,
+        "best_label_encoder": best_label_encoder,
+        "best_dataset": best_dataset,
+    }
+
+
+def train_lightgbm_pair(
+    signal_train_df: pd.DataFrame,
+    signal_val_df: pd.DataFrame,
+    signal_test_df: pd.DataFrame,
+    signal_feature_columns: list,
+    baseline_feature_columns: list,
+    y_train: np.ndarray,
+    y_val: np.ndarray,
+    y_test: np.ndarray,
+    label_encoder,
+    param_grid: dict,
+    n_cv_splits: int,
+    cv_step_size: int,
+    cv_min_train_size: int,
+    device_config: dict,
+    random_state: int = 42
+) -> dict:
+    """
+    Train both LightGBM signal and baseline models.
+
+    This consolidates the training of signal (with news features) and baseline (price-only)
+    models, handling feature sanitization, CV setup, and grid search for both.
+
+    Args:
+        signal_train_df: Training dataframe enriched with news features
+        signal_val_df: Validation dataframe enriched with news features
+        signal_test_df: Test dataframe enriched with news features
+        signal_feature_columns: Signal model feature columns (baseline + news + XGBoost predictions)
+        baseline_feature_columns: Baseline model feature columns (price/temporal only)
+        y_train: Training labels (encoded)
+        y_val: Validation labels (encoded)
+        y_test: Test labels (encoded)
+        label_encoder: Label encoder for targets
+        param_grid: Parameter grid for LightGBM
+        n_cv_splits: Number of CV splits
+        cv_step_size: CV step size in hours
+        cv_min_train_size: Minimum training size for CV
+        device_config: Device configuration dict
+        random_state: Random seed
+
+    Returns:
+        Dictionary containing:
+            - 'signal_model': Fitted signal LightGBM model
+            - 'baseline_model': Fitted baseline LightGBM model
+            - 'signal_grid': Signal GridSearchCV object
+            - 'baseline_grid': Baseline GridSearchCV object
+            - 'signal_column_rename_map': Signal feature sanitization mapping
+            - 'baseline_column_rename_map': Baseline feature sanitization mapping
+            - 'evaluation': Evaluation artifacts from evaluate_lgbm_models
+    """
+    import copy
+
+    print(f"\n{'='*70}")
+    print("TRAINING LIGHTGBM SIGNAL & BASELINE MODELS")
+    print(f"{'='*70}")
+
+    # Sanitize feature names for both models
+    signal_feature_columns_sanitized, _ = sanitize_feature_names(signal_feature_columns)
+    baseline_feature_columns_sanitized, _ = sanitize_feature_names(baseline_feature_columns)
+
+    signal_column_rename_map = dict(zip(signal_feature_columns, signal_feature_columns_sanitized))
+    baseline_column_rename_map = dict(zip(baseline_feature_columns, baseline_feature_columns_sanitized))
+
+    # Display class distribution once (applies to both models)
+    print("\nClass distribution in training data:")
+    unique, counts = np.unique(y_train, return_counts=True)
+    for cls, cnt in zip(unique, counts):
+        cls_label = label_encoder.classes_[cls]
+        print(f"  Class {cls_label}: {cnt} samples ({cnt/len(y_train)*100:.1f}%)")
+    print()
+
+    # --- Train Signal Model ---
+    print("Training SIGNAL model (baseline + news features + XGBoost predictions)...")
+    train_signal_X = signal_train_df[signal_feature_columns].fillna(0).rename(columns=signal_column_rename_map)
+
+    # CV splitter for signal model
+    base_signal_splitter = ExpandingWindowSplitter(
+        n_splits=n_cv_splits,
+        step_size=cv_step_size,
+        min_train_size=cv_min_train_size,
+    )
+    available_signal_splits = base_signal_splitter.get_n_splits(train_signal_X)
+    if available_signal_splits == 0:
+        raise ValueError("Insufficient data for LightGBM signal cross-validation.")
+
+    signal_cv = ExpandingWindowSplitter(
+        n_splits=min(n_cv_splits, available_signal_splits),
+        step_size=cv_step_size,
+        min_train_size=cv_min_train_size,
+    )
+
+    signal_grid = run_lgbm_grid_search(
+        X_train=train_signal_X,
+        y_train=y_train,
+        param_grid=copy.deepcopy(param_grid),
+        cv=signal_cv,
+        device_config=device_config,
+        random_state=random_state,
+    )
+
+    signal_model = signal_grid.best_estimator_
+    print(f"✓ Signal model trained - Best CV macro-F1: {signal_grid.best_score_:.3f}")
+    print(f"  Best params: {signal_grid.best_params_}")
+
+    # --- Train Baseline Model ---
+    print("\nTraining BASELINE model (price/temporal features only)...")
+    train_baseline_X = signal_train_df[baseline_feature_columns].fillna(0).rename(columns=baseline_column_rename_map)
+
+    # CV splitter for baseline model
+    base_baseline_splitter = ExpandingWindowSplitter(
+        n_splits=n_cv_splits,
+        step_size=cv_step_size,
+        min_train_size=cv_min_train_size,
+    )
+    available_baseline_splits = base_baseline_splitter.get_n_splits(train_baseline_X)
+    if available_baseline_splits == 0:
+        raise ValueError("Insufficient data for LightGBM baseline cross-validation.")
+
+    baseline_cv = ExpandingWindowSplitter(
+        n_splits=min(n_cv_splits, available_baseline_splits),
+        step_size=cv_step_size,
+        min_train_size=cv_min_train_size,
+    )
+
+    baseline_grid = run_lgbm_grid_search(
+        X_train=train_baseline_X,
+        y_train=y_train,
+        param_grid=copy.deepcopy(param_grid),
+        cv=baseline_cv,
+        device_config=device_config,
+        random_state=random_state,
+    )
+
+    baseline_model = baseline_grid.best_estimator_
+    print(f"✓ Baseline model trained - Best CV macro-F1: {baseline_grid.best_score_:.3f}")
+    print(f"  Best params: {baseline_grid.best_params_}")
+
+    # --- Evaluate Both Models ---
+    print("\nEvaluating both models on validation and test sets...")
+    evaluation = evaluate_lgbm_models(
+        signal_model=signal_model,
+        baseline_model=baseline_model,
+        signal_feature_columns=signal_feature_columns,
+        baseline_feature_columns=baseline_feature_columns,
+        val_df=signal_val_df,
+        test_df=signal_test_df,
+        y_val=y_val,
+        y_test=y_test,
+        label_encoder=label_encoder,
+        signal_column_rename_map=signal_column_rename_map,
+        baseline_column_rename_map=baseline_column_rename_map,
+    )
+
+    print(f"{'='*70}\n")
+
+    return {
+        "signal_model": signal_model,
+        "baseline_model": baseline_model,
+        "signal_grid": signal_grid,
+        "baseline_grid": baseline_grid,
+        "signal_column_rename_map": signal_column_rename_map,
+        "baseline_column_rename_map": baseline_column_rename_map,
+        "evaluation": evaluation,
+    }

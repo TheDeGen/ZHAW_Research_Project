@@ -1079,3 +1079,116 @@ def plot_permutation_importance(
     except Exception as e:
         print(f"Permutation importance failed: {e}")
         print(f"{'='*70}\n")
+
+
+def plot_transaction_cost_sensitivity(
+    strategy_actions: dict[str, np.ndarray],
+    spread_series: pd.Series,
+    cost_range: list[float] = None,
+    pct_cost_scenarios: dict[str, tuple[float, float]] = None
+) -> None:
+    """
+    Plot transaction cost sensitivity analysis for trading strategies.
+
+    Analyzes how transaction costs impact strategy performance through:
+    1. Summary tables for different cost scenarios
+    2. Line plots showing total return vs transaction cost
+    3. Line plots showing Sharpe ratio vs transaction cost
+
+    Args:
+        strategy_actions: Dict mapping strategy name to action arrays
+        spread_series: Series of price spreads
+        cost_range: List of fixed costs to test (EUR/MWh). Default: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+        pct_cost_scenarios: Dict of scenario names to (fixed_cost, pct_cost) tuples.
+            Default scenarios: No Costs, Low Cost, Medium Cost, High Cost
+    """
+    from . import evaluation
+
+    # Default cost ranges
+    if cost_range is None:
+        cost_range = [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+
+    if pct_cost_scenarios is None:
+        pct_cost_scenarios = {
+            "No Costs": (0.0, 0.0),
+            "Low Cost (€0.5/MWh)": (0.5, 0.0),
+            "Medium Cost (€1.0/MWh)": (1.0, 0.0),
+            "High Cost (€2.0/MWh + 0.1%)": (2.0, 0.001),
+        }
+
+    print("\n" + "=" * 80)
+    print("BACKTESTING WITH TRANSACTION COSTS")
+    print("=" * 80)
+
+    # Evaluate scenarios
+    for scenario_name, (fixed_cost, pct_cost) in pct_cost_scenarios.items():
+        print(f"\n{scenario_name}:")
+        print(f"  Fixed: €{fixed_cost}/MWh, Percentage: {pct_cost*100:.2f}%")
+
+        strategy_returns_cost = evaluation.compute_strategy_returns(
+            action_map=strategy_actions,
+            spread=spread_series,
+            transaction_cost=fixed_cost,
+            transaction_cost_pct=pct_cost
+        )
+
+        returns_summary_cost = evaluation.summarise_strategy_set(strategy_returns_cost)
+        print(f"\n{returns_summary_cost[['Total Return', 'Sharpe (annualised)', 'Sortino (annualised)']].to_string()}")
+
+    # Visualize impact
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Collect strategy names
+    strategy_names = list(strategy_actions.keys())
+
+    # Initialize storage for each strategy
+    strategy_returns_by_cost = {name: [] for name in strategy_names}
+    strategy_sharpes_by_cost = {name: [] for name in strategy_names}
+
+    # Compute metrics for each cost level
+    for cost in cost_range:
+        temp_returns = evaluation.compute_strategy_returns(
+            action_map=strategy_actions,
+            spread=spread_series,
+            transaction_cost=cost,
+            transaction_cost_pct=0.0
+        )
+        temp_summary = evaluation.summarise_strategy_set(temp_returns)
+
+        for name in strategy_names:
+            strategy_returns_by_cost[name].append(temp_returns[name].sum())
+            strategy_sharpes_by_cost[name].append(temp_summary.loc[name, "Sharpe (annualised)"])
+
+    # Plot 1: Total return vs cost
+    colors = ['steelblue', 'coral', 'green']
+    markers = ['o', 's', '^']
+
+    for idx, name in enumerate(strategy_names):
+        ax1.plot(cost_range, strategy_returns_by_cost[name],
+                marker=markers[idx % len(markers)], linewidth=2, markersize=8,
+                color=colors[idx % len(colors)], label=name.replace("LightGBM ", ""))
+
+    ax1.axhline(0, color='black', linestyle='--', linewidth=1, alpha=0.5)
+    ax1.set_xlabel('Fixed Transaction Cost (EUR/MWh)', fontweight='bold', fontsize=12)
+    ax1.set_ylabel('Total Return (EUR/MWh)', fontweight='bold', fontsize=12)
+    ax1.set_title('Total Return vs Transaction Cost', fontweight='bold', fontsize=14)
+    ax1.legend(loc='best')
+    ax1.grid(alpha=0.3)
+
+    # Plot 2: Sharpe ratio vs cost
+    for idx, name in enumerate(strategy_names):
+        ax2.plot(cost_range, strategy_sharpes_by_cost[name],
+                marker=markers[idx % len(markers)], linewidth=2, markersize=8,
+                color=colors[idx % len(colors)], label=name.replace("LightGBM ", ""))
+
+    ax2.axhline(0, color='black', linestyle='--', linewidth=1, alpha=0.5)
+    ax2.set_xlabel('Fixed Transaction Cost (EUR/MWh)', fontweight='bold', fontsize=12)
+    ax2.set_ylabel('Sharpe Ratio (Annualized)', fontweight='bold', fontsize=12)
+    ax2.set_title('Sharpe Ratio vs Transaction Cost', fontweight='bold', fontsize=14)
+    ax2.legend(loc='best')
+    ax2.grid(alpha=0.3)
+
+    plt.tight_layout()
+    plt.show()
+
+    print("\n" + "=" * 80)
