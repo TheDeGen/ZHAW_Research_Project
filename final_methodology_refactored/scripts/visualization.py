@@ -8,7 +8,10 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
+from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve, auc
+from sklearn.preprocessing import label_binarize
+from sklearn.inspection import PartialDependenceDisplay
+import warnings
 
 
 def plot_confusion_matrices(models_dict, y_test, class_labels, label_encoder=None):

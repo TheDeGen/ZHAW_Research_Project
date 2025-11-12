@@ -51,7 +51,7 @@ CV_STEP_SIZE_HOURS = 24  # Step size between CV folds
 
 # Expanding window parameters
 DEFAULT_EXPANDING_SPLITS = 4  # Lower number for quicker iteration
-DEFAULT_EXPANDING_STEP = 12
+DEFAULT_EXPANDING_STEP = 24
 DEFAULT_MIN_TRAIN_SIZE = 336  # Two weeks of hourly observations
 
 # ============================================================================

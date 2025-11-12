@@ -13,6 +13,58 @@ from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
 from config import model_config
 
 
+def sanitize_feature_names(feature_names):
+    """
+    Sanitize feature names to be JSON-compatible for LightGBM.
+
+    Replaces German umlauts and special characters that cause
+    'Do not support special JSON characters in feature name' errors.
+
+    Args:
+        feature_names: List or pandas Index of feature names
+
+    Returns:
+        List of sanitized feature names and dictionary mapping sanitized -> original
+    """
+    import unicodedata
+    import re
+
+    sanitized_names = []
+    name_mapping = {}
+
+    for name in feature_names:
+        # Convert to string if needed
+        name_str = str(name)
+
+        # Replace common German characters
+        replacements = {
+            'ä': 'ae', 'ö': 'oe', 'ü': 'ue',
+            'Ä': 'Ae', 'Ö': 'Oe', 'Ü': 'Ue',
+            'ß': 'ss'
+        }
+        sanitized = name_str
+        for old, new in replacements.items():
+            sanitized = sanitized.replace(old, new)
+
+        # Normalize unicode characters to ASCII equivalents
+        sanitized = unicodedata.normalize('NFKD', sanitized)
+        sanitized = sanitized.encode('ascii', 'ignore').decode('ascii')
+
+        # Replace remaining special characters with underscores
+        sanitized = re.sub(r'[^a-zA-Z0-9_\-.]', '_', sanitized)
+
+        # Remove multiple consecutive underscores
+        sanitized = re.sub(r'_+', '_', sanitized)
+
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+
+        sanitized_names.append(sanitized)
+        name_mapping[sanitized] = name_str
+
+    return sanitized_names, name_mapping
+
+
 class ExpandingWindowSplitter:
     """
     Custom expanding-window splitter with fixed step size for time series CV.

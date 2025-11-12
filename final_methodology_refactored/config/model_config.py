@@ -43,10 +43,10 @@ LIGHTGBM_PARAM_GRID = {
     'num_leaves': [31, 50, 100],
     'max_depth': [5, 10, 15],
     'learning_rate': [0.01, 0.05, 0.1],
-    'n_estimators': [100, 200, 500],
-    'min_child_samples': [20, 50, 100],
-    'subsample': [0.8, 1.0],
-    'colsample_bytree': [0.8, 1.0],
+    'n_estimators': [100],
+    'min_child_samples': [20],
+    'subsample': [0.8],
+    'colsample_bytree': [0.8],
 }
 
 # ============================================================================
