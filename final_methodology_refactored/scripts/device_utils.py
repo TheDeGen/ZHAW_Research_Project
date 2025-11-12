@@ -50,7 +50,7 @@ def detect_compute_device(task='general', verbose=True):
         'gpu_memory_gb': 0,
         'optimal_batch_size': 32,
         'tree_method': 'hist',
-        'predictor': 'auto',
+        'xgb_device': 'cpu',
         'n_jobs': default_jobs,
         'description': f'CPU-only ({cpu_cores} cores)',
         'lgbm_device': 'cpu',
@@ -68,8 +68,8 @@ def detect_compute_device(task='general', verbose=True):
             'gpu_name': gpu_name,
             'gpu_memory_gb': gpu_memory,
             'description': f'CUDA ({gpu_name})',
-            'tree_method': 'gpu_hist',
-            'predictor': 'gpu_predictor',
+            'tree_method': 'hist',
+            'xgb_device': 'cuda',
             'n_jobs': max(1, default_jobs // gpu_count),
             'lgbm_device': 'gpu',
         })
@@ -87,7 +87,7 @@ def detect_compute_device(task='general', verbose=True):
         if verbose:
             print(f"✓ CUDA detected: {gpu_name} ({gpu_memory:.1f} GB)")
             print(f"  Optimal batch size: {device_info['optimal_batch_size']}")
-            print(f"  XGBoost tree method: {device_info['tree_method']} • predictor: {device_info['predictor']}")
+            print(f"  XGBoost tree method: {device_info['tree_method']} • device: {device_info['xgb_device']}")
             print(f"  Parallel jobs: {device_info['n_jobs']}")
 
     # Check for MPS (Apple Silicon)
@@ -99,7 +99,7 @@ def detect_compute_device(task='general', verbose=True):
             'optimal_batch_size': 128,
             'description': 'Apple MPS GPU',
             'tree_method': 'hist',
-            'predictor': 'auto',
+            'xgb_device': 'cpu',
             'n_jobs': default_jobs,
             'lgbm_device': 'cpu',
         })

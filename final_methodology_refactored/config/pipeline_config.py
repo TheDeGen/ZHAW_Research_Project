@@ -125,6 +125,9 @@ HIERARCHICAL_ROUTING_SETTINGS = {
 
 HYPOTHESIS_TEMPLATE = "Der Artikel handelt von: {}."
 
+# Label for articles with no energy relevance (to be excluded from feature engineering)
+OTHER_LABEL = "kein Bezug zu Energie, Wetter oder Finanzmärkten"
+
 # ============================================================================
 # XGBOOST HYPERPARAMETER DISTRIBUTIONS
 # ============================================================================

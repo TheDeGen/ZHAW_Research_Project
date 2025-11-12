@@ -127,19 +127,40 @@ def run_embedding_stage(
         if show_progress:
             print(f"Processing {len(filtered_texts)} texts with batch_size={effective_batch_size}")
 
-        def run_pipeline(payload: list[str]) -> list[dict]:
-            outputs = classifier(
-                payload,
-                labels,
-                hypothesis_template=hyp_template,
-                multi_label=False,
-            )
-            if isinstance(outputs, dict):
-                outputs = [outputs]
-            return outputs
+        def run_pipeline_with_dataset(payload: list[str]) -> list[dict]:
+            """Use HuggingFace Dataset for efficient GPU batching."""
+            try:
+                from datasets import Dataset as HFDataset
+
+                # Create a dataset for efficient GPU processing
+                dataset = HFDataset.from_dict({"text": payload})
+
+                # Process using the pipeline with dataset (GPU-optimized)
+                outputs = []
+                for out in classifier(
+                    dataset["text"],
+                    candidate_labels=labels,
+                    hypothesis_template=hyp_template,
+                    multi_label=False,
+                    batch_size=effective_batch_size,
+                ):
+                    outputs.append(out)
+
+                return outputs
+            except ImportError:
+                # Fallback to standard approach if datasets not available
+                outputs = classifier(
+                    payload,
+                    labels,
+                    hypothesis_template=hyp_template,
+                    multi_label=False,
+                )
+                if isinstance(outputs, dict):
+                    outputs = [outputs]
+                return outputs
 
         try:
-            results = run_pipeline(list(filtered_texts))
+            results = run_pipeline_with_dataset(list(filtered_texts))
         except RuntimeError as gpu_exc:
             if "out of memory" in str(gpu_exc).lower():
                 print("GPU OOM during classification; processing in smaller chunks...")
@@ -160,7 +181,7 @@ def run_embedding_stage(
                 ):
                     chunk_end = min(chunk_start + chunk_size, len(filtered_texts))
                     chunk_texts = list(filtered_texts[chunk_start:chunk_end])
-                    chunk_results = run_pipeline(chunk_texts)
+                    chunk_results = run_pipeline_with_dataset(chunk_texts)
                     results.extend(chunk_results)
             else:
                 raise
@@ -314,7 +335,7 @@ def run_embedding_stage(
     news_df['classification_stage1_score'] = title_results['stage1_scores']
 
     # Re-classify "other" using description
-    other_label = "kein Bezug zu Energie, Wetter oder Finanzmärkten"
+    other_label = candidate_labels[-1]  # "kein Bezug zu Energie, Wetter oder Finanzmärkten"
     other_mask = news_df['classification'] == other_label
     num_other = other_mask.sum()
 
@@ -546,11 +567,22 @@ def compute_time_decayed_topic_counts(
     Returns:
         DataFrame with datetime index and columns for each topic's weighted count
     """
+    from config import pipeline_config as cfg
+
     td_topic_news_df = news_df.copy()
     if not isinstance(td_topic_news_df.index, pd.DatetimeIndex):
         td_topic_news_df.index = pd.to_datetime(td_topic_news_df.index)
     if td_topic_news_df.index.tz is not None:
         td_topic_news_df.index = td_topic_news_df.index.tz_localize(None)
+
+    # Filter out "other" articles (no energy relevance)
+    other_label = cfg.OTHER_LABEL
+    other_mask = td_topic_news_df['classification'] == other_label
+    articles_filtered = other_mask.sum()
+    td_topic_news_df = td_topic_news_df[~other_mask]
+
+    if verbose and articles_filtered > 0:
+        print(f"Filtered {articles_filtered} 'other' articles (no energy relevance) from time decay aggregation")
 
     topics = td_topic_news_df['classification'].dropna().unique()
     td_topics_df = pd.DataFrame(index=master_df.index)
@@ -682,6 +714,8 @@ def compute_time_decayed_embeddings(
     Returns:
         Array of weighted average embeddings with shape (n_timestamps, embedding_dim)
     """
+    from config import pipeline_config as cfg
+
     if not isinstance(news_df.index, pd.DatetimeIndex):
         raise ValueError("news_df must have a DatetimeIndex")
     if news_df.index.name != 'publishedAt':
@@ -690,6 +724,16 @@ def compute_time_decayed_embeddings(
     td_embedding_news_df = news_df.copy()
     if td_embedding_news_df.index.tz is not None:
         td_embedding_news_df.index = td_embedding_news_df.index.tz_localize(None)
+
+    # Filter out "other" articles (no energy relevance)
+    other_label = cfg.OTHER_LABEL
+    if 'classification' in td_embedding_news_df.columns:
+        other_mask = td_embedding_news_df['classification'] == other_label
+        articles_filtered = other_mask.sum()
+        td_embedding_news_df = td_embedding_news_df[~other_mask]
+
+        if verbose and articles_filtered > 0:
+            print(f"Filtered {articles_filtered} 'other' articles (no energy relevance) from embedding aggregation")
 
     if verbose:
         print(f"Computing time-decayed weighted average embeddings for {len(master_df)} timestamps")
@@ -834,7 +878,7 @@ def reduce_embeddings_gpu_first(
     cache_label: str,
     n_components: int = 20,
     use_umap: bool = True,
-    random_state: int = 42,
+    random_state: int | None = None,
 ) -> pd.DataFrame:
     """
     Reduce embeddings with GPU-first UMAP and disk caching.
@@ -845,7 +889,8 @@ def reduce_embeddings_gpu_first(
         cache_label: Label for caching
         n_components: Number of components to reduce to
         use_umap: Use UMAP if True, otherwise use PCA
-        random_state: Random seed
+        random_state: Deprecated - kept for backward compatibility but ignored
+                     (UMAP runs without random_state to enable parallel processing)
 
     Returns:
         DataFrame with reduced embeddings
@@ -884,11 +929,11 @@ def reduce_embeddings_gpu_first(
                 try:
                     import cupy as cp  # type: ignore
 
+                    # Note: random_state removed to enable parallel processing
                     reducer = device_utils.CUML_UMAP(
                         n_components=n_components,
                         n_neighbors=15,
                         min_dist=0.1,
-                        random_state=random_state,
                     )
                     reduced_gpu = reducer.fit_transform(cp.asarray(embeddings))
                     reduced = cp.asnumpy(reduced_gpu)
@@ -897,6 +942,7 @@ def reduce_embeddings_gpu_first(
                     print(f"cuML UMAP unavailable ({gpu_exc}); reverting to CPU UMAP.")
 
         if reduced is None:
+            # Note: random_state removed to enable n_jobs parallelism
             reducer = umap.UMAP(n_components=n_components, n_jobs=-1, verbose=False)
             reduced = reducer.fit_transform(embeddings)
             backend = "umap-learn"

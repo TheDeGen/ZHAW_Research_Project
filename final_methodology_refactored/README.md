@@ -96,16 +96,14 @@ final_methodology_refactored/
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install required packages
-pip install pandas numpy scikit-learn xgboost lightgbm
-pip install torch transformers sentence-transformers
-pip install matplotlib seaborn tqdm umap-learn
-pip install pyarrow  # For caching
+# Install all CPU packages from requirements.txt
+pip install -r requirements.txt
 
-# Optional: GPU acceleration
-pip install cupy-cuda11x  # For NVIDIA GPUs
-pip install pynvml psutil  # For resource monitoring
+# Install GPU packages via conda (recommended for Linux/GPU servers)
+conda install -c rapidsai -c conda-forge -c nvidia cuml-cu12 cupy
 ```
+
+**Note**: cuML and cupy are commented out in `requirements.txt` because they require special installation via conda or the RAPIDS pip index. The conda installation method shown above is the most reliable.
 
 ### 2. Prepare Data
 

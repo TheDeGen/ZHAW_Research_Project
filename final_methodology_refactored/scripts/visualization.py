@@ -843,7 +843,8 @@ def plot_embedding_quality(news_df: pd.DataFrame, n_samples: int = 500, perplexi
     # UMAP visualization
     try:
         import umap
-        reducer_umap = umap.UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+        # Note: random_state removed to enable n_jobs parallelism
+        reducer_umap = umap.UMAP(n_components=2, n_neighbors=15, min_dist=0.1, n_jobs=-1)
         embedding_2d_umap = reducer_umap.fit_transform(embeddings)
 
         if labels is not None:

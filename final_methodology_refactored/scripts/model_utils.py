@@ -158,19 +158,16 @@ def build_xgb_classifier(random_state: int = 42, device_config: dict | None = No
         }
 
     if device_config is None:
-        params.update({'tree_method': 'hist', 'n_jobs': -1})
+        params.update({'tree_method': 'hist', 'device': 'cpu', 'n_jobs': -1})
     else:
         tree_method = device_config.get('tree_method', 'hist')
-        device_type = device_config.get('device', 'cpu')
+        xgb_device = device_config.get('xgb_device', 'cpu')
 
         params.update({
             'tree_method': tree_method,
+            'device': xgb_device,
             'n_jobs': device_config.get('n_jobs', -1)
         })
-
-        # Only add predictor parameter for GPU training (not for CPU hist or MPS)
-        if tree_method == 'gpu_hist' and device_type == 'cuda':
-            params['predictor'] = device_config.get('predictor', 'gpu_predictor')
 
     return XGBClassifier(**params)
 

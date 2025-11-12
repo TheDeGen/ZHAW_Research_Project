@@ -1,6 +1,11 @@
 accelerate
-cuml
-cupy
+datasets
+# GPU packages - Install via conda for best compatibility:
+# conda install -c rapidsai -c conda-forge -c nvidia cuml-cu12 cupy
+# OR use pip with RAPIDS index:
+# pip install cupy-cuda12x cuml-cu12 --extra-index-url=https://pypi.nvidia.com
+# cuml
+# cupy
 imbalanced-learn
 joblib
 lightgbm
@@ -9,7 +14,7 @@ numpy
 pandas
 psutil
 pyarrow
-pynvml
+nvidia-ml-py
 scikit-learn
 scipy
 seaborn
