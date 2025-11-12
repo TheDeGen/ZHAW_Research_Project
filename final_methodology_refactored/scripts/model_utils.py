@@ -793,35 +793,96 @@ def optimize_classification_threshold(
 
     metric_func = metric_funcs[metric]
 
+    # Ensure probabilities are in a 2D array for consistent handling
+    if y_proba.ndim == 1:
+        y_proba_2d = y_proba.reshape(-1, 1)
+    else:
+        y_proba_2d = y_proba
+
+    n_classes = y_proba_2d.shape[1]
+    if n_classes == 1:
+        positive_scores = y_proba_2d[:, 0]
+    else:
+        if class_of_interest < 0 or class_of_interest >= n_classes:
+            raise ValueError(
+                f"class_of_interest {class_of_interest} out of bounds for probability array with "
+                f"{n_classes} columns."
+            )
+        positive_scores = y_proba_2d[:, class_of_interest]
+
+    # Convert true labels to binary membership of the class of interest
+    y_true_binary = (y_true == class_of_interest).astype(int)
+
     # Try different thresholds
     thresholds = np.linspace(0.1, 0.9, 81)
     scores = []
 
     for thresh in thresholds:
-        y_pred = (y_proba >= thresh).astype(int)
+        y_pred = (positive_scores >= thresh).astype(int)
         try:
             if metric == 'accuracy':
-                score = metric_func(y_true, y_pred)
+                score = metric_func(y_true_binary, y_pred)
             else:
-                score = metric_func(y_true, y_pred, zero_division=0)
+                score = metric_func(y_true_binary, y_pred, zero_division=0)
             scores.append(score)
-        except:
+        except Exception:
             scores.append(0.0)
 
-    best_idx = np.argmax(scores)
-    optimal_threshold = thresholds[best_idx]
-    best_score = scores[best_idx]
+    best_idx = int(np.argmax(scores))
+    optimal_threshold = float(thresholds[best_idx])
+    best_score = float(scores[best_idx])
+
+    default_idx = np.argmin(np.abs(thresholds - 0.5))
+    default_score = float(scores[default_idx])
 
     print(f"\n{'='*70}")
     print("THRESHOLD OPTIMIZATION")
     print(f"{'='*70}")
     print(f"Metric: {metric}")
+    print(f"Optimised class index: {class_of_interest} (of {n_classes} classes)")
     print(f"Optimal threshold: {optimal_threshold:.3f}")
     print(f"Best {metric}: {best_score:.4f}")
-    print(f"Default (0.5) {metric}: {scores[40]:.4f}")  # Index 40 corresponds to 0.5
+    print(f"Default (0.5) {metric}: {default_score:.4f}")
     print(f"{'='*70}\n")
 
     return optimal_threshold, best_score
+
+
+def apply_threshold_to_probabilities(
+    y_proba: np.ndarray,
+    threshold: float,
+    class_of_interest: int,
+    fallback: str = "argmax"
+) -> np.ndarray:
+    """
+    Apply a class-specific probability threshold to generate predictions.
+
+    Args:
+        y_proba: Array of shape (n_samples, n_classes) with predicted probabilities.
+        threshold: Probability threshold for the class of interest.
+        class_of_interest: Index of the class to prioritise when probability exceeds the threshold.
+        fallback: Strategy for samples below the threshold ("argmax" supported).
+
+    Returns:
+        Array of predicted class indices.
+    """
+    if y_proba.ndim == 1:
+        y_proba = y_proba.reshape(-1, 1)
+
+    n_samples, n_classes = y_proba.shape
+    if class_of_interest < 0 or class_of_interest >= n_classes:
+        raise ValueError(
+            f"class_of_interest {class_of_interest} out of bounds for probability array with "
+            f"{n_classes} columns."
+        )
+
+    if fallback != "argmax":
+        raise ValueError(f"Unsupported fallback strategy: {fallback}")
+
+    predictions = np.argmax(y_proba, axis=1) if n_classes > 1 else np.zeros(n_samples, dtype=int)
+    class_proba = y_proba[:, class_of_interest]
+    predictions[class_proba >= threshold] = class_of_interest
+    return predictions
 
 
 def train_xgb_candidates(

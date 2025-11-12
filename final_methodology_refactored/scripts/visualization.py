@@ -687,6 +687,9 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
         for i, (idx, val) in enumerate(target_counts.items()):
             pct = val / target_counts.sum() * 100
             ax1.text(idx, val, f'{val}\n({pct:.1f}%)', ha='center', va='bottom')
+    else:
+        ax1.text(0.5, 0.5, f'Column "{target_col}"\nnot found', ha='center', va='center', fontsize=10)
+        ax1.set_title('Target Distribution', fontweight='bold', fontsize=12)
 
     # 2. Price spreads over time
     ax2 = fig.add_subplot(gs[0, 1:])
@@ -698,10 +701,13 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
         ax2.set_ylabel('Spread (EUR/MWh)', fontweight='bold')
         ax2.set_title('Price Spread Over Time (Spot - Day Ahead)', fontweight='bold', fontsize=12)
         ax2.grid(alpha=0.3)
+    else:
+        ax2.text(0.5, 0.5, 'Column "real_spread_abs"\nnot found', ha='center', va='center', fontsize=10)
+        ax2.set_title('Price Spread Over Time', fontweight='bold', fontsize=12)
 
     # 3. News classification distribution
     ax3 = fig.add_subplot(gs[1, 0])
-    if 'classification' in news_df.columns:
+    if 'classification' in news_df.columns and len(news_df) > 0:
         class_counts = news_df['classification'].value_counts().head(8)
         ax3.barh(range(len(class_counts)), class_counts.values, color='steelblue', alpha=0.7)
         ax3.set_yticks(range(len(class_counts)))
@@ -710,28 +716,47 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
         ax3.set_xlabel('Count', fontweight='bold')
         ax3.set_title('Top 8 News Classifications', fontweight='bold', fontsize=12)
         ax3.grid(alpha=0.3, axis='x')
+    else:
+        ax3.text(0.5, 0.5, 'No news classification\ndata available', ha='center', va='center', fontsize=10)
+        ax3.set_title('Top 8 News Classifications', fontweight='bold', fontsize=12)
 
-    # 4. Price correlation heatmap
+    # 4. Spread volatility analysis (rolling standard deviation)
     ax4 = fig.add_subplot(gs[1, 1])
-    price_cols = ['Spot Price', 'Day Ahead Auction', 'real_spread_abs']
-    available_price_cols = [col for col in price_cols if col in master_df.columns]
-    if len(available_price_cols) >= 2:
-        corr = master_df[available_price_cols].corr()
-        sns.heatmap(corr, annot=True, fmt='.2f', cmap='coolwarm', center=0,
-                   square=True, ax=ax4, cbar_kws={"shrink": 0.8})
-        ax4.set_title('Price Feature Correlations', fontweight='bold', fontsize=12)
+    if 'real_spread_abs' in master_df.columns and len(master_df) > 168:  # Need enough data for rolling
+        spread_series = master_df['real_spread_abs'].dropna()
+        # Calculate rolling std with different windows
+        rolling_24h = spread_series.rolling(window=24, min_periods=1).std()
+        rolling_168h = spread_series.rolling(window=168, min_periods=1).std()  # 1 week
+
+        ax4.plot(rolling_24h.index, rolling_24h.values, label='24h window', linewidth=1.5, alpha=0.8)
+        ax4.plot(rolling_168h.index, rolling_168h.values, label='1-week window', linewidth=1.5, alpha=0.8)
+        ax4.set_xlabel('Time', fontweight='bold')
+        ax4.set_ylabel('Volatility (EUR/MWh)', fontweight='bold')
+        ax4.set_title('Spread Volatility Over Time', fontweight='bold', fontsize=12)
+        ax4.legend(loc='best', fontsize=9)
+        ax4.grid(alpha=0.3)
+    else:
+        ax4.text(0.5, 0.5, 'Insufficient data for\nvolatility analysis', ha='center', va='center', fontsize=10)
+        ax4.set_title('Spread Volatility Over Time', fontweight='bold', fontsize=12)
 
     # 5. Load distribution
     ax5 = fig.add_subplot(gs[1, 2])
     if 'Load' in master_df.columns:
         load_series = master_df['Load'].dropna()
-        ax5.hist(load_series, bins=50, color='orange', alpha=0.7, edgecolor='black')
-        ax5.set_xlabel('Load (MW)', fontweight='bold')
-        ax5.set_ylabel('Frequency', fontweight='bold')
+        if len(load_series) > 0:
+            ax5.hist(load_series, bins=50, color='orange', alpha=0.7, edgecolor='black')
+            ax5.set_xlabel('Load (MW)', fontweight='bold')
+            ax5.set_ylabel('Frequency', fontweight='bold')
+            ax5.set_title('Load Distribution', fontweight='bold', fontsize=12)
+            ax5.grid(alpha=0.3, axis='y')
+            ax5.axvline(load_series.mean(), color='red', linestyle='--', linewidth=2, label='Mean')
+            ax5.legend()
+        else:
+            ax5.text(0.5, 0.5, 'No Load data\navailable', ha='center', va='center', fontsize=10)
+            ax5.set_title('Load Distribution', fontweight='bold', fontsize=12)
+    else:
+        ax5.text(0.5, 0.5, 'Column "Load"\nnot found', ha='center', va='center', fontsize=10)
         ax5.set_title('Load Distribution', fontweight='bold', fontsize=12)
-        ax5.grid(alpha=0.3, axis='y')
-        ax5.axvline(load_series.mean(), color='red', linestyle='--', linewidth=2, label='Mean')
-        ax5.legend()
 
     # 6. Hourly price patterns
     ax6 = fig.add_subplot(gs[2, 0])
@@ -743,6 +768,14 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
         ax6.set_title('Average Spot Price by Hour', fontweight='bold', fontsize=12)
         ax6.grid(alpha=0.3)
         ax6.set_xticks(range(0, 24, 3))
+    else:
+        missing_cols = []
+        if 'hour' not in master_df.columns:
+            missing_cols.append('hour')
+        if 'Spot Price' not in master_df.columns:
+            missing_cols.append('Spot Price')
+        ax6.text(0.5, 0.5, f'Missing columns:\n{", ".join(missing_cols)}', ha='center', va='center', fontsize=10)
+        ax6.set_title('Average Spot Price by Hour', fontweight='bold', fontsize=12)
 
     # 7. Day of week patterns
     ax7 = fig.add_subplot(gs[2, 1])
@@ -755,10 +788,18 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
         ax7.set_ylabel('Average Spread (EUR/MWh)', fontweight='bold')
         ax7.set_title('Average Spread by Day of Week', fontweight='bold', fontsize=12)
         ax7.grid(alpha=0.3, axis='y')
+    else:
+        missing_cols = []
+        if 'day_of_week' not in master_df.columns:
+            missing_cols.append('day_of_week')
+        if 'real_spread_abs' not in master_df.columns:
+            missing_cols.append('real_spread_abs')
+        ax7.text(0.5, 0.5, f'Missing columns:\n{", ".join(missing_cols)}', ha='center', va='center', fontsize=10)
+        ax7.set_title('Average Spread by Day of Week', fontweight='bold', fontsize=12)
 
     # 8. News volume over time
     ax8 = fig.add_subplot(gs[2, 2])
-    if hasattr(news_df.index, 'to_period'):
+    if hasattr(news_df.index, 'to_period') and len(news_df) > 0:
         news_daily = news_df.groupby(news_df.index.to_period('D')).size()
         ax8.plot(news_daily.index.to_timestamp(), news_daily.values, linewidth=1.5, color='purple')
         ax8.set_xlabel('Date', fontweight='bold')
@@ -766,6 +807,9 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
         ax8.set_title('News Volume Over Time', fontweight='bold', fontsize=12)
         ax8.grid(alpha=0.3)
         fig.autofmt_xdate()
+    else:
+        ax8.text(0.5, 0.5, 'No time-indexed\nnews data available', ha='center', va='center', fontsize=10)
+        ax8.set_title('News Volume Over Time', fontweight='bold', fontsize=12)
 
     fig.suptitle('Exploratory Data Analysis Dashboard', fontsize=16, fontweight='bold', y=0.995)
     plt.show()

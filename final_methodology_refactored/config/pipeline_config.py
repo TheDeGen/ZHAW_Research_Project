@@ -29,7 +29,7 @@ DEFAULT_LOOKBACK_WINDOW = HOURS_PER_TWO_WEEKS  # 336 hours (2 weeks)
 DEFAULT_DECAY_LAMBDA = 0.05  # Exponential decay rate
 
 # Target variable parameters
-SPREAD_TARGET_DEADBAND = 10.0  # EUR/MWh band for neutral class
+SPREAD_TARGET_DEADBAND = 7.0  # EUR/MWh band for neutral class
 TARGET_COLUMN = 'spread_target_shift_24'
 
 # ============================================================================
@@ -60,6 +60,7 @@ DEFAULT_MIN_TRAIN_SIZE = 336  # Two weeks of hourly observations
 
 DEFAULT_BATCH_SIZE = 32
 DEFAULT_N_JOBS = -1  # Use all CPU cores
+XGB_RANDOM_SEARCH_ITERS = 80  # Increased iterations for deeper hyperparameter exploration
 
 # Ridge regression alphas for grid search
 DEFAULT_ALPHAS = np.logspace(-3, 3, 13)
