@@ -398,3 +398,174 @@ def run_lgbm_grid_search(
 
     grid.fit(X_train, y_train)
     return grid
+
+
+def prepare_lgbm_datasets(
+    best_xgb_model,
+    best_dataset: dict,
+    best_xgb_feature_columns: list,
+    baseline_features: list,
+    target_column: str,
+    prediction_prefix: str = "xgb"
+) -> dict:
+    """
+    Prepare datasets for LightGBM training by enriching with XGBoost predictions
+    and setting up feature columns.
+
+    Args:
+        best_xgb_model: Fitted XGBoost model
+        best_dataset: Dictionary containing train_df, val_df, test_df, scaled_news_features
+        best_xgb_feature_columns: Feature columns used by XGBoost
+        baseline_features: List of baseline feature names
+        target_column: Name of target column
+        prediction_prefix: Prefix for XGBoost prediction features
+
+    Returns:
+        Dictionary containing enriched datasets and feature columns
+    """
+    # Enrich datasets with XGBoost predictions
+    enriched_datasets = enrich_with_model_predictions(
+        model=best_xgb_model,
+        dataframes={
+            "train": best_dataset["train_df"],
+            "val": best_dataset["val_df"],
+            "test": best_dataset["test_df"]
+        },
+        feature_columns=best_xgb_feature_columns,
+        prediction_prefix=prediction_prefix
+    )
+
+    # Define feature sets
+    xgb_feature_names = [
+        f"{prediction_prefix}_prob_class0",
+        f"{prediction_prefix}_prob_class1",
+        f"{prediction_prefix}_pred"
+    ]
+
+    scaled_news_features = best_dataset["scaled_news_features"]
+    signal_feature_columns = baseline_features + scaled_news_features + xgb_feature_names
+    baseline_feature_columns = baseline_features.copy()
+
+    return {
+        "train_df": enriched_datasets["train"],
+        "val_df": enriched_datasets["val"],
+        "test_df": enriched_datasets["test"],
+        "signal_feature_columns": signal_feature_columns,
+        "baseline_feature_columns": baseline_feature_columns,
+        "xgb_feature_names": xgb_feature_names,
+    }
+
+
+def prepare_lgbm_targets(train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.DataFrame, target_column: str):
+    """
+    Prepare and encode targets for LightGBM training.
+
+    Args:
+        train_df: Training dataframe
+        val_df: Validation dataframe
+        test_df: Test dataframe
+        target_column: Name of target column
+
+    Returns:
+        Dictionary containing encoded targets and label encoder
+    """
+    from sklearn.preprocessing import LabelEncoder
+
+    label_encoder = LabelEncoder()
+    label_encoder.fit(train_df[target_column].astype(int))
+
+    y_train = label_encoder.transform(train_df[target_column].astype(int))
+    y_val = label_encoder.transform(val_df[target_column].astype(int))
+    y_test = label_encoder.transform(test_df[target_column].astype(int))
+
+    return {
+        "y_train": y_train,
+        "y_val": y_val,
+        "y_test": y_test,
+        "label_encoder": label_encoder,
+    }
+
+
+def evaluate_lgbm_models(
+    signal_model,
+    baseline_model,
+    signal_feature_columns: list,
+    baseline_feature_columns: list,
+    val_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    y_val: np.ndarray,
+    y_test: np.ndarray,
+    label_encoder,
+    signal_column_rename_map: dict,
+    baseline_column_rename_map: dict,
+):
+    """
+    Evaluate LightGBM signal and baseline models on validation and test sets.
+
+    Args:
+        signal_model: Fitted signal model
+        baseline_model: Fitted baseline model
+        signal_feature_columns: Signal model feature columns
+        baseline_feature_columns: Baseline model feature columns
+        val_df: Validation dataframe
+        test_df: Test dataframe
+        y_val: Validation targets (encoded)
+        y_test: Test targets (encoded)
+        label_encoder: Label encoder used for targets
+        signal_column_rename_map: Mapping for signal feature sanitization
+        baseline_column_rename_map: Mapping for baseline feature sanitization
+
+    Returns:
+        Dictionary containing predictions, probabilities, and artifacts
+    """
+    from sklearn.metrics import f1_score, accuracy_score
+
+    # Prepare data with sanitized column names
+    val_signal_X = val_df[signal_feature_columns].fillna(0).rename(columns=signal_column_rename_map)
+    val_baseline_X = val_df[baseline_feature_columns].fillna(0).rename(columns=baseline_column_rename_map)
+    test_signal_X = test_df[signal_feature_columns].fillna(0).rename(columns=signal_column_rename_map)
+    test_baseline_X = test_df[baseline_feature_columns].fillna(0).rename(columns=baseline_column_rename_map)
+
+    # Make predictions
+    signal_val_pred = signal_model.predict(val_signal_X)
+    signal_val_proba = signal_model.predict_proba(val_signal_X)
+    signal_test_pred = signal_model.predict(test_signal_X)
+    signal_test_proba = signal_model.predict_proba(test_signal_X)
+
+    baseline_val_pred = baseline_model.predict(val_baseline_X)
+    baseline_val_proba = baseline_model.predict_proba(val_baseline_X)
+    baseline_test_pred = baseline_model.predict(test_baseline_X)
+    baseline_test_proba = baseline_model.predict_proba(test_baseline_X)
+
+    # Calculate validation metrics
+    val_signal_macro_f1 = f1_score(y_val, signal_val_pred, average="macro", zero_division=0)
+    val_signal_accuracy = accuracy_score(y_val, signal_val_pred)
+    val_baseline_macro_f1 = f1_score(y_val, baseline_val_pred, average="macro", zero_division=0)
+    val_baseline_accuracy = accuracy_score(y_val, baseline_val_pred)
+
+    print("✓ LightGBM validation performance")
+    print(f"  Signal model  → Acc={val_signal_accuracy:.3f}, Macro-F1={val_signal_macro_f1:.3f}")
+    print(f"  Baseline model → Acc={val_baseline_accuracy:.3f}, Macro-F1={val_baseline_macro_f1:.3f}")
+
+    # Return artifacts
+    return {
+        "signal": {
+            "model": signal_model,
+            "feature_columns": signal_feature_columns,
+            "val_pred": signal_val_pred,
+            "val_proba": signal_val_proba,
+            "test_pred": signal_test_pred,
+            "test_proba": signal_test_proba,
+            "test_X": test_signal_X,
+        },
+        "baseline": {
+            "model": baseline_model,
+            "feature_columns": baseline_feature_columns,
+            "val_pred": baseline_val_pred,
+            "val_proba": baseline_val_proba,
+            "test_pred": baseline_test_pred,
+            "test_proba": baseline_test_proba,
+            "test_X": test_baseline_X,
+        },
+        "label_encoder": label_encoder,
+    }

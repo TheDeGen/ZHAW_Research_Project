@@ -140,4 +140,4 @@ TIME_DECAY_LAMBDAS = [0.01, 0.05, 0.1]
 
 NEWS_DATA_PATH = "german_news_v1.csv"
 ENERGY_DATA_PATH = "energy_baseline.csv"
-MIN_TIMESTAMP = "2025-01-01"
+MIN_TIMESTAMP = "2024-01-01"

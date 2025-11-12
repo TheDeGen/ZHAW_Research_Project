@@ -497,3 +497,143 @@ def plot_class_distribution(y, title="Target Class Distribution", label_encoder=
     plt.show()
 
     return dict(zip(unique, zip(counts, percentages)))
+
+
+def plot_cumulative_returns(
+    returns_map,
+    title="Cumulative Returns Comparison",
+    ylabel="Cumulative Return",
+    figsize=(14, 8),
+    dpi=100,
+    show=True,
+):
+    """
+    Plot cumulative returns for multiple strategies.
+
+    Args:
+        returns_map: dict[str, pd.Series]
+            Dictionary mapping strategy name to return series.
+        title: str
+            Plot title.
+        ylabel: str
+            Y-axis label.
+        figsize: tuple
+            Figure size in inches.
+        dpi: int
+            Figure resolution.
+        show: bool
+            Whether to call plt.show() at the end.
+
+    Returns:
+        Tuple of (fig, ax)
+    """
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+
+    colors = ['steelblue', 'coral', 'green', 'purple', 'orange']
+    linestyles = ['-', '--', '-.', ':']
+
+    for idx, (name, returns) in enumerate(returns_map.items()):
+        cumulative = returns.cumsum()
+        color = colors[idx % len(colors)]
+        linestyle = linestyles[idx % len(linestyles)]
+        ax.plot(cumulative, label=name, color=color, linestyle=linestyle, linewidth=2, alpha=0.8)
+
+    ax.set_xlabel("Time Period")
+    ax.set_ylabel(ylabel)
+    ax.set_title(title, fontweight="bold", fontsize=14)
+    ax.axhline(0, color='black', linestyle='-', linewidth=0.8, alpha=0.5)
+    ax.legend(loc='best', framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+
+    if show:
+        plt.show()
+
+    return fig, ax
+
+
+def plot_nlp_feature_importance(
+    model,
+    feature_names,
+    nlp_prefix="news_",
+    top_n=20,
+    figsize=(14, 8),
+):
+    """
+    Compare NLP feature importance against other feature categories.
+
+    Args:
+        model: Trained model with `feature_importances_` attribute
+        feature_names: List of feature names aligned with model training
+        nlp_prefix: Prefix identifying NLP-derived features
+        top_n: Number of top features to display in detailed view
+        figsize: Figure size in inches
+
+    Returns:
+        Tuple of (fig, (ax1, ax2))
+    """
+    if not hasattr(model, "feature_importances_"):
+        raise AttributeError("Model does not have 'feature_importances_' attribute")
+
+    importances = model.feature_importances_
+    if len(importances) != len(feature_names):
+        raise ValueError(f"Feature count mismatch: {len(feature_names)} names vs {len(importances)} importances")
+
+    # Create importance dataframe
+    importance_df = pd.DataFrame({
+        "feature": feature_names,
+        "importance": importances
+    }).sort_values("importance", ascending=False)
+
+    # Categorize features
+    def categorize_feature(name):
+        name_lower = str(name).lower()
+        if name_lower.startswith(nlp_prefix.lower()):
+            return "NLP"
+        elif any(kw in name_lower for kw in ["price", "spread", "auction", "spot"]):
+            return "Price"
+        elif any(kw in name_lower for kw in ["solar", "wind", "hydro", "biomass", "load", "generation"]):
+            return "Energy"
+        else:
+            return "Other"
+
+    importance_df["category"] = importance_df["feature"].apply(categorize_feature)
+
+    # Panel 1: Top N NLP features
+    nlp_df = importance_df[importance_df["category"] == "NLP"].head(top_n)
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
+    fig.suptitle("NLP Feature Importance Analysis", fontsize=16, fontweight="bold")
+
+    if len(nlp_df) > 0:
+        sns.barplot(data=nlp_df, x="importance", y="feature", ax=ax1, palette="viridis")
+        ax1.set_title(f"Top {len(nlp_df)} NLP Features", fontweight="bold")
+        ax1.set_xlabel("Importance (Gain)")
+        ax1.set_ylabel("")
+    else:
+        ax1.text(0.5, 0.5, "No NLP features found", ha="center", va="center", fontsize=12)
+        ax1.set_title("Top NLP Features", fontweight="bold")
+
+    # Panel 2: Category comparison
+    category_importance = importance_df.groupby("category")["importance"].sum().sort_values(ascending=False)
+
+    colors = {"NLP": "#1f77b4", "Price": "#ff7f0e", "Energy": "#2ca02c", "Other": "#d62728"}
+    color_list = [colors.get(cat, "#808080") for cat in category_importance.index]
+
+    ax2.bar(category_importance.index, category_importance.values, color=color_list, edgecolor="black", alpha=0.7)
+    ax2.set_title("Feature Importance by Category", fontweight="bold")
+    ax2.set_xlabel("Feature Category")
+    ax2.set_ylabel("Total Importance")
+    ax2.grid(True, alpha=0.3, axis="y")
+
+    # Annotate bars with percentages
+    total_importance = category_importance.sum()
+    for i, (cat, val) in enumerate(category_importance.items()):
+        pct = (val / total_importance) * 100
+        ax2.text(i, val, f"{pct:.1f}%", ha="center", va="bottom", fontweight="bold")
+
+    plt.tight_layout()
+    plt.show()
+
+    return fig, (ax1, ax2)
