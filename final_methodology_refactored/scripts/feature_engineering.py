@@ -29,7 +29,7 @@ def run_embedding_stage(
     hypothesis_template: str,
     device_config: dict,
     batch_size: int | None = None,
-    model_name: str = "Sahajtomar/German_Zeroshot",
+    model_name: str = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
 ):
     """
     Run zero-shot classification on news articles.

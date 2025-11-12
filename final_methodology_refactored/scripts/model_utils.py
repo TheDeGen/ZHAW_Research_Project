@@ -124,23 +124,38 @@ class ExpandingWindowSplitter:
             train_end = test_end
 
 
-def build_xgb_classifier(random_state: int = 42, device_config: dict | None = None) -> XGBClassifier:
+def build_xgb_classifier(random_state: int = 42, device_config: dict | None = None, num_classes: int = 3) -> XGBClassifier:
     """
     Build an XGBoost classifier with device-specific optimizations.
 
     Args:
         random_state: Random seed
         device_config: Device configuration dict from detect_compute_device()
+        num_classes: Number of classes (2 for binary, 3+ for multiclass)
 
     Returns:
         Configured XGBClassifier instance
     """
-    params = {
-        'objective': 'binary:logistic',
-        'eval_metric': 'logloss',
-        'enable_categorical': False,
-        'random_state': random_state
-    }
+    # Configure objective and metric based on number of classes
+    if num_classes == 2:
+        objective = 'binary:logistic'
+        eval_metric = 'logloss'
+        params = {
+            'objective': objective,
+            'eval_metric': eval_metric,
+            'enable_categorical': False,
+            'random_state': random_state
+        }
+    else:
+        objective = 'multi:softprob'
+        eval_metric = 'mlogloss'
+        params = {
+            'objective': objective,
+            'eval_metric': eval_metric,
+            'num_class': num_classes,
+            'enable_categorical': False,
+            'random_state': random_state
+        }
 
     if device_config is None:
         params.update({'tree_method': 'hist', 'n_jobs': -1})
@@ -269,7 +284,14 @@ def run_xgb_random_search(
 
     X_train = train_df[feature_columns].fillna(0)
     y_train_raw = train_df[target_column].astype(int)
-    y_train = map_target_to_binary(y_train_raw)
+
+    # Encode target for 3-class classification: {-1, 0, 1} → {0, 1, 2}
+    from sklearn.preprocessing import LabelEncoder
+    label_encoder = LabelEncoder()
+    y_train = label_encoder.fit_transform(y_train_raw)
+    num_classes = len(label_encoder.classes_)
+
+    print(f"Training XGBoost with {num_classes} classes: {label_encoder.classes_}")
 
     splitter = ExpandingWindowSplitter(
         n_splits=n_splits,
@@ -284,7 +306,7 @@ def run_xgb_random_search(
             f"or min_train_size."
         )
 
-    classifier = build_xgb_classifier(random_state=random_state, device_config=device_config)
+    classifier = build_xgb_classifier(random_state=random_state, device_config=device_config, num_classes=num_classes)
 
     if device_config is None:
         search_n_jobs = -1
@@ -314,7 +336,7 @@ def run_xgb_random_search(
     )
 
     search.fit(X_train, y_train)
-    return search, feature_columns
+    return search, feature_columns, label_encoder
 
 
 def build_lgbm_classifier(
@@ -379,8 +401,17 @@ def run_lgbm_grid_search(
     """
     param_grid = param_grid or model_config.LIGHTGBM_PARAM_GRID
     y_array = np.asarray(y_train)
+    num_classes = int(np.unique(y_array).size)
+
+    # Compute and display class weights
+    class_weights = compute_class_weights(y_array)
+    print(f"\nClass distribution in training data:")
+    unique, counts = np.unique(y_array, return_counts=True)
+    for cls, cnt in zip(unique, counts):
+        print(f"  Class {cls}: {cnt} samples ({cnt/len(y_array)*100:.1f}%) - Weight: {class_weights[cls]:.3f}")
+
     estimator = build_lgbm_classifier(
-        num_classes=int(np.unique(y_array).size),
+        num_classes=num_classes,
         random_state=random_state,
         device_config=device_config,
     )
@@ -681,6 +712,53 @@ def calibrate_classifier(
         print(f"✓ Calibration complete (multiclass: {y_val_proba_uncal.shape[1]} classes)")
 
     return calibrated_model
+
+
+def print_class_wise_metrics(y_true: np.ndarray, y_pred: np.ndarray, label_encoder=None, dataset_name: str = ""):
+    """
+    Print detailed per-class metrics including confusion matrix and recall.
+
+    Args:
+        y_true: True labels
+        y_pred: Predicted labels
+        label_encoder: Optional LabelEncoder to decode class names
+        dataset_name: Name of dataset for display
+    """
+    from sklearn.metrics import classification_report, confusion_matrix
+
+    if dataset_name:
+        print(f"\n{'='*70}")
+        print(f"CLASS-WISE METRICS: {dataset_name}")
+        print(f"{'='*70}")
+
+    cm = confusion_matrix(y_true, y_pred)
+    print("\nConfusion Matrix:")
+    print(cm)
+
+    # Decode class names if encoder provided
+    if label_encoder is not None:
+        class_labels = label_encoder.classes_
+    else:
+        class_labels = np.unique(y_true)
+
+    print("\nPer-Class Recall:")
+    for i, class_label in enumerate(class_labels):
+        if i < len(cm):
+            recall = cm[i, i] / cm[i].sum() if cm[i].sum() > 0 else 0
+            print(f"  Class {class_label}: {recall:.3f} ({cm[i, i]}/{cm[i].sum()})")
+
+    print("\nClassification Report:")
+    target_names = [str(label) for label in class_labels]
+    print(classification_report(y_true, y_pred, target_names=target_names, zero_division=0))
+
+    # Count predictions per class
+    print("\nPredictions per class:")
+    unique_pred, counts_pred = np.unique(y_pred, return_counts=True)
+    for cls, cnt in zip(unique_pred, counts_pred):
+        cls_label = class_labels[cls] if label_encoder and cls < len(class_labels) else cls
+        print(f"  Class {cls_label}: {cnt} predictions ({cnt/len(y_pred)*100:.1f}%)")
+
+    print(f"{'='*70}\n")
 
 
 def optimize_classification_threshold(

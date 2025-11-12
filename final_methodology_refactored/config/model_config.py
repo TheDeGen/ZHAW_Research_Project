@@ -36,6 +36,7 @@ LIGHTGBM_BASE_PARAMS = {
     'metric': 'multi_logloss',
     'boosting_type': 'gbdt',
     'verbose': -1,
+    'is_unbalance': True,  # Handle class imbalance
 }
 
 # Grid search parameter ranges for LightGBM

@@ -207,6 +207,7 @@ with profiling.StageProfiler("Data Loading", device_config):
 ### Stage 2: News Processing
 **2A. Topic Classification**
 - Zero-shot classification using German energy topics
+- Model: `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7`
 - Batch processing with GPU acceleration
 - Re-classification of "other" articles using descriptions
 

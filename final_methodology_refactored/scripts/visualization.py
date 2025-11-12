@@ -14,7 +14,7 @@ from sklearn.inspection import PartialDependenceDisplay
 import warnings
 
 
-def plot_confusion_matrices(models_dict, y_test, class_labels, label_encoder=None):
+def plot_confusion_matrices(models_dict, y_test, class_labels=None, label_encoder=None):
     """
     Plot confusion matrices for multiple models.
 
@@ -29,15 +29,38 @@ def plot_confusion_matrices(models_dict, y_test, class_labels, label_encoder=Non
             If provided, predictions produced by the estimators will be inverse-transformed
             into the original label space before computing the confusion matrix.
     """
-    y_true = np.asarray(y_test)
+    y_true_encoded = np.asarray(y_test)
+
+    if label_encoder is not None:
+        y_true = label_encoder.inverse_transform(y_true_encoded)
+        if class_labels is None:
+            class_labels = label_encoder.classes_
+        else:
+            class_labels = np.asarray(class_labels)
+            if (
+                np.issubdtype(class_labels.dtype, np.integer)
+                and class_labels.min() >= 0
+                and class_labels.max() < len(label_encoder.classes_)
+            ):
+                class_labels = label_encoder.classes_[class_labels]
+    else:
+        y_true = y_true_encoded
+        if class_labels is None:
+            class_labels = np.unique(y_true)
+
+    # Ensure labels are numpy array for indexing and ConfusionMatrixDisplay compatibility
+    class_labels = np.asarray(class_labels)
     n_models = len(models_dict)
     fig, axes = plt.subplots(1, n_models, figsize=(6 * n_models, 5), squeeze=False)
     axes = axes.ravel()
 
     for ax, (name, (model, X_test)) in zip(axes, models_dict.items()):
-        y_pred = model.predict(X_test)
+        y_pred_encoded = model.predict(X_test)
         if label_encoder is not None:
-            y_pred = label_encoder.inverse_transform(y_pred)
+            y_pred = label_encoder.inverse_transform(y_pred_encoded)
+        else:
+            y_pred = y_pred_encoded
+
         cm = confusion_matrix(y_true, y_pred, labels=class_labels)
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_labels)
         disp.plot(ax=ax, values_format='d', cmap='Blues', colorbar=False)
