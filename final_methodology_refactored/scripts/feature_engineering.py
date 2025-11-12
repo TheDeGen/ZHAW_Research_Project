@@ -131,14 +131,16 @@ def run_embedding_stage(
             """Use HuggingFace Dataset for efficient GPU batching."""
             try:
                 from datasets import Dataset as HFDataset
+                from transformers.pipelines.pt_utils import KeyDataset
 
                 # Create a dataset for efficient GPU processing
                 dataset = HFDataset.from_dict({"text": payload})
 
-                # Process using the pipeline with dataset (GPU-optimized)
+                # Process using the pipeline with KeyDataset for proper iteration
+                # KeyDataset allows the pipeline to properly iterate over dataset rows
                 outputs = []
                 for out in classifier(
-                    dataset["text"],
+                    KeyDataset(dataset, "text"),
                     candidate_labels=labels,
                     hypothesis_template=hyp_template,
                     multi_label=False,
@@ -147,11 +149,11 @@ def run_embedding_stage(
                     outputs.append(out)
 
                 return outputs
-            except ImportError:
-                # Fallback to standard approach if datasets not available
+            except (ImportError, AttributeError):
+                # Fallback to standard approach if datasets/KeyDataset not available
                 outputs = classifier(
                     payload,
-                    labels,
+                    candidate_labels=labels,
                     hypothesis_template=hyp_template,
                     multi_label=False,
                 )
