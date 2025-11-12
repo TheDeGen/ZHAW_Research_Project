@@ -10,6 +10,23 @@ This pipeline predicts 24-hour ahead energy price movements (Long/Neutral/Short)
 - **Energy market features**: Price, load, and temporal features
 - **Machine learning**: XGBoost and LightGBM classifiers with hyperparameter optimization
 
+## Current NLP Implementation
+
+- **Zero-shot topic attribution**: Article titles are processed with `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7`, returning the top label and confidence score; low-confidence items tagged as "other" are re-run on descriptions to recover additional signal, yet the current median score (~0.26) indicates most articles sit near decision boundaries.
+- **Sentence embeddings**: Titles are encoded via `paraphrase-multilingual-MiniLM-L12-v2`, cached as 384-dimensional vectors, and reused across runs to keep notebook execution fast.
+- **Time-decayed features**: For every forecast timestamp, topic counts and embedding averages are computed with exponential decay, producing hourly features that capture both discrete classifications and dense semantic context before dimensionality reduction (UMAP or PCA to 50 components).
+- **Dataset assembly**: Decayed NLP features are merged with price, load, and temporal baselines, standardised per split, and evaluated through expanding-window RidgeCV to rank decay parameters prior to tree-based model training.
+- **Quality diagnostics**: `visualization.plot_embedding_quality` projects the raw article embeddings with UMAP and t-SNE; the present plots show limited clustering by topic, consistent with the low zero-shot confidence and high share of "other" assignments.
+
+## Suggested Enhancements
+
+- **Refine label set and prompts**: Shorten and disambiguate German topic statements, consider hierarchical routing (energy vs. non-energy before fine-grained classes), and drop or merge rarely triggered labels to reduce overlap driving low confidence.
+- **Enrich classification inputs**: Concatenate title and description, optionally translate mixed-language snippets, and filter boilerplate updates so the zero-shot model sees fuller, more contextual text.
+- **Confidence-aware feature weighting**: Multiply time-decayed topic counts and embedding contributions by the classifier score, track per-window score statistics, and suppress articles with confidence below a chosen threshold to limit noise.
+- **Evaluate alternative embeddings**: Benchmark models such as `sentence-transformers/paraphrase-multilingual-mpnet-base-v2` or `intfloat/multilingual-e5-large`, and explore supervised dimensionality reduction (e.g., LDA or supervised UMAP) to improve downstream separability.
+- **Supervised calibration path**: Label a small corpus of articles to fine-tune or calibrate the classifier, using the current zero-shot outputs as weak labels; even a lightweight adapter can raise median confidence and sharpen topic-driven signals.
+- **Broaden decay search**: Extend lookback/decay grids, test asymmetric windows for topics vs. embeddings, and include alternative decay functions (piecewise linear, sigmoid) to better capture how narratives influence prices over time.
+
 ## Project Structure
 
 ```

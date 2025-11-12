@@ -1114,7 +1114,7 @@ def evaluate_single_parameter_combination(
         }
 
     tscv = TimeSeriesSplit(n_splits=effective_splits)
-    ridge_cv = RidgeClassifierCV(alphas=alphas, cv=tscv, scoring='accuracy')
+    ridge_cv = RidgeClassifierCV(alphas=alphas, cv=tscv, scoring='f1_macro')
     ridge_cv.fit(X_train, y_train)
 
     val_predictions = ridge_cv.predict(X_val)
