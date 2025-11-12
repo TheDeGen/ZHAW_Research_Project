@@ -125,6 +125,7 @@ Edit `config/pipeline_config.py` to modify:
 - Cross-validation settings
 - Grid search ranges
 - Model hyperparameters
+- Hierarchical topic routing (stage definitions, thresholds)
 
 ## Module Documentation
 
@@ -142,7 +143,9 @@ Central configuration file containing:
 - `FORECAST_HORIZON_HOURS = 24` - Prediction horizon
 - `DEFAULT_LOOKBACK_WINDOW = 336` - News lookback (2 weeks)
 - `DEFAULT_DECAY_LAMBDA = 0.05` - Time decay rate
-- `SPREAD_TARGET_DEADBAND = 5.0` - Neutral class threshold (EUR/MWh)
+- `SPREAD_TARGET_DEADBAND = 10.0` - Neutral class threshold (EUR/MWh)
+- `HIERARCHICAL_TOPIC_GROUPS` - Stage-1 routing categories mapped to leaf topics
+- `HIERARCHICAL_ROUTING_SETTINGS` - Stage order, confidence thresholds and fallback behaviour
 
 ### scripts/device_utils.py
 **Functions:**
@@ -179,7 +182,7 @@ with profiling.StageProfiler("Data Loading", device_config):
 
 ### scripts/feature_engineering.py
 **Main Functions:**
-- `run_embedding_stage()` - Zero-shot topic classification
+- `run_embedding_stage()` - Hierarchical zero-shot topic classification
 - `compute_embeddings()` - Generate sentence embeddings (cached)
 - `compute_time_decayed_topic_counts()` - Time-weighted topic aggregation
 - `compute_time_decayed_embeddings()` - Time-weighted embedding aggregation
@@ -223,10 +226,12 @@ with profiling.StageProfiler("Data Loading", device_config):
 
 ### Stage 2: News Processing
 **2A. Topic Classification**
-- Zero-shot classification using German energy topics
+- Hierarchical routing with stage-1 categories (Nachfrage, Angebot, Brennstoffpreise, Makrofinanzen, Geopolitik, Wetter, Sonstiges)
+- Stage-2 selection of leaf topics ensures compatibility with downstream feature aggregation
 - Model: `MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7`
 - Batch processing with GPU acceleration
 - Re-classification of "other" articles using descriptions
+- Diagnostics: `classification_stage1`, `classification_stage1_score` columns added for QC
 
 **2B. Sentence Embeddings**
 - Generate 384-dim embeddings using multilingual MiniLM

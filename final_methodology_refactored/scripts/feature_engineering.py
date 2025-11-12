@@ -30,21 +30,25 @@ def run_embedding_stage(
     device_config: dict,
     batch_size: int | None = None,
     model_name: str = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7",
+    hierarchical_topic_groups: dict[str, list[str]] | None = None,
+    routing_settings: dict | None = None,
 ):
     """
     Run zero-shot classification on news articles.
 
     Args:
         news_df: News dataframe with 'title' and 'description' columns
-        candidate_labels: List of candidate labels for zero-shot classification
+        candidate_labels: List of candidate labels for zero-shot classification (leaf topics)
         hypothesis_template: Template for zero-shot classification hypothesis
         device_config: Device configuration dict from detect_compute_device()
         batch_size: Batch size for inference (optional, auto-detected if None)
         model_name: HuggingFace model name for zero-shot classification
+        hierarchical_topic_groups: Optional mapping of high-level category -> leaf topic labels
+        routing_settings: Optional routing configuration (stage order, thresholds, fallback behaviour)
 
     Returns:
         dict containing:
-            - news_df: News dataframe with 'classification' and 'classification_score' columns
+            - news_df: News dataframe with hierarchical classification columns
             - classifier: Fitted classifier pipeline
             - batch_size: Effective batch size used
             - hf_device: HuggingFace device used
@@ -112,29 +116,33 @@ def run_embedding_stage(
         index = resolved_hf_device_repr.index
         resolved_hf_device_repr = device_type if index is None else f"{device_type}:{index}"
 
-    def classify_batch(texts, labels, hypothesis_template, show_progress=True):
+    def zero_shot_predict(texts, labels, hyp_template, show_progress=True):
         valid_pairs = [(idx, text) for idx, text in enumerate(texts) if pd.notna(text) and text.strip()]
+        predictions: list[dict | None] = [None] * len(texts)
+
         if not valid_pairs:
-            return {}, {}
+            return predictions
 
         _, filtered_texts = zip(*valid_pairs)
         if show_progress:
             print(f"Processing {len(filtered_texts)} texts with batch_size={effective_batch_size}")
 
-        try:
-            # Process all texts in one call (pipeline handles batching internally)
-            results = classifier(
-                list(filtered_texts),
+        def run_pipeline(payload: list[str]) -> list[dict]:
+            outputs = classifier(
+                payload,
                 labels,
-                hypothesis_template=hypothesis_template,
+                hypothesis_template=hyp_template,
                 multi_label=False,
             )
-            if isinstance(results, dict):
-                results = [results]
+            if isinstance(outputs, dict):
+                outputs = [outputs]
+            return outputs
+
+        try:
+            results = run_pipeline(list(filtered_texts))
         except RuntimeError as gpu_exc:
-            # Handle GPU out-of-memory errors by processing in smaller chunks
             if "out of memory" in str(gpu_exc).lower():
-                print(f"GPU OOM during classification; processing in smaller chunks...")
+                print("GPU OOM during classification; processing in smaller chunks...")
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                 elif hasattr(torch, "mps") and torch.backends.mps.is_available():
@@ -143,49 +151,167 @@ def run_embedding_stage(
                     except AttributeError:
                         pass
 
-                # Process in chunks
-                chunk_size = max(10, len(filtered_texts) // 4)
+                chunk_size = max(10, len(filtered_texts) // 4 or 1)
                 results = []
-                for chunk_start in tqdm(range(0, len(filtered_texts), chunk_size),
-                                       desc="Processing text chunks",
-                                       disable=not show_progress):
+                for chunk_start in tqdm(
+                    range(0, len(filtered_texts), chunk_size),
+                    desc="Processing text chunks",
+                    disable=not show_progress,
+                ):
                     chunk_end = min(chunk_start + chunk_size, len(filtered_texts))
                     chunk_texts = list(filtered_texts[chunk_start:chunk_end])
-
-                    chunk_results = classifier(
-                        chunk_texts,
-                        labels,
-                        hypothesis_template=hypothesis_template,
-                        multi_label=False,
-                    )
-                    if isinstance(chunk_results, dict):
-                        chunk_results = [chunk_results]
+                    chunk_results = run_pipeline(chunk_texts)
                     results.extend(chunk_results)
             else:
                 raise
 
-        classifications = {}
-        scores = {}
         for (idx, _), result in zip(valid_pairs, results):
-            classifications[idx] = result['labels'][0]
-            scores[idx] = float(result['scores'][0])
+            predictions[idx] = result
 
-        for idx in range(len(texts)):
-            classifications.setdefault(idx, None)
-            scores.setdefault(idx, 0.0)
+        return predictions
 
-        return classifications, scores
+    def hierarchical_classify(texts: list[str], show_progress: bool = True) -> dict[str, list]:
+        if not hierarchical_topic_groups:
+            flat_predictions = zero_shot_predict(
+                texts,
+                candidate_labels,
+                hypothesis_template,
+                show_progress=show_progress,
+            )
+            final_labels: list[str | None] = []
+            final_scores: list[float] = []
+            for result in flat_predictions:
+                if result is None:
+                    final_labels.append(None)
+                    final_scores.append(0.0)
+                else:
+                    final_labels.append(result["labels"][0])
+                    final_scores.append(float(result["scores"][0]))
+            return {
+                "final_labels": final_labels,
+                "final_scores": final_scores,
+                "stage1_labels": final_labels,
+                "stage1_scores": final_scores,
+            }
+
+        routing_defaults = routing_settings or {}
+        stage_order = routing_defaults.get("stage_order", list(hierarchical_topic_groups.keys()))
+        stage_order = [label for label in stage_order if label in hierarchical_topic_groups]
+        missing_groups = [label for label in hierarchical_topic_groups.keys() if label not in stage_order]
+        stage_order.extend(missing_groups)
+
+        thresholds = routing_defaults.get("stage_thresholds", {})
+        stage1_threshold: float = float(thresholds.get("stage1", 0.35))
+        stage2_threshold: float = float(thresholds.get("stage2", 0.25))
+        allow_fallback = bool(routing_defaults.get("allow_fallback_to_other", True))
+
+        fallback_group = None
+        if allow_fallback and "Sonstiges" in hierarchical_topic_groups:
+            fallback_group = "Sonstiges"
+
+        stage1_predictions = zero_shot_predict(
+            texts,
+            stage_order,
+            hypothesis_template,
+            show_progress=show_progress,
+        )
+
+        stage1_labels: list[str] = []
+        stage1_scores: list[float] = []
+        group_assignments: list[str] = []
+        for result in stage1_predictions:
+            if result is None:
+                stage1_label = fallback_group or (stage_order[0] if stage_order else None)
+                stage1_score = 0.0
+            else:
+                stage1_label = result["labels"][0]
+                stage1_score = float(result["scores"][0])
+
+            if stage1_label not in hierarchical_topic_groups:
+                stage1_label = fallback_group or stage1_label
+
+            if (
+                stage1_label in hierarchical_topic_groups
+                and stage1_score < stage1_threshold
+                and fallback_group
+            ):
+                stage1_label = fallback_group
+
+            if stage1_label is None:
+                stage1_label = fallback_group or stage_order[0]
+
+            stage1_labels.append(stage1_label)
+            stage1_scores.append(stage1_score)
+            group_assignments.append(stage1_label)
+
+        fallback_leaf = None
+        if fallback_group:
+            fallback_candidates = hierarchical_topic_groups.get(fallback_group, [])
+            fallback_leaf = fallback_candidates[0] if fallback_candidates else None
+        else:
+            fallback_leaf = None
+
+        final_labels: list[str | None] = [fallback_leaf] * len(texts)
+        final_scores: list[float] = [0.0] * len(texts)
+
+        from collections import defaultdict
+
+        grouped_indices: dict[str, list[int]] = defaultdict(list)
+        for idx, group in enumerate(group_assignments):
+            if group not in hierarchical_topic_groups:
+                group = fallback_group or group
+            grouped_indices[group].append(idx)
+
+        for group, indices in grouped_indices.items():
+            leaf_labels = hierarchical_topic_groups.get(group, candidate_labels)
+            if not leaf_labels:
+                continue
+
+            if len(leaf_labels) == 1:
+                leaf_label = leaf_labels[0]
+                for idx in indices:
+                    final_labels[idx] = leaf_label
+                    final_scores[idx] = stage1_scores[idx]
+                continue
+
+            group_texts = [texts[idx] for idx in indices]
+            group_predictions = zero_shot_predict(
+                group_texts,
+                leaf_labels,
+                hypothesis_template,
+                show_progress=show_progress,
+            )
+
+            for local_idx, prediction in enumerate(group_predictions):
+                global_idx = indices[local_idx]
+                if prediction is None:
+                    final_label = fallback_leaf
+                    final_score = 0.0
+                else:
+                    final_label = prediction["labels"][0]
+                    final_score = float(prediction["scores"][0])
+
+                if final_score < stage2_threshold and fallback_leaf is not None:
+                    final_label = fallback_leaf
+                    final_score = max(final_score, stage1_scores[global_idx])
+
+                final_labels[global_idx] = final_label
+                final_scores[global_idx] = final_score
+
+        return {
+            "final_labels": final_labels,
+            "final_scores": final_scores,
+            "stage1_labels": stage1_labels,
+            "stage1_scores": stage1_scores,
+        }
 
     titles = news_df['title'].tolist()
-    classifications_dict, scores_dict = classify_batch(
-        titles,
-        candidate_labels,
-        hypothesis_template,
-        show_progress=True,
-    )
+    title_results = hierarchical_classify(titles, show_progress=True)
 
-    news_df['classification'] = [classifications_dict[i] for i in range(len(news_df))]
-    news_df['classification_score'] = [scores_dict[i] for i in range(len(news_df))]
+    news_df['classification'] = title_results['final_labels']
+    news_df['classification_score'] = title_results['final_scores']
+    news_df['classification_stage1'] = title_results['stage1_labels']
+    news_df['classification_stage1_score'] = title_results['stage1_scores']
 
     # Re-classify "other" using description
     other_label = "kein Bezug zu Energie, Wetter oder Finanzmärkten"
@@ -195,15 +321,12 @@ def run_embedding_stage(
     if num_other > 0:
         other_indices = news_df[other_mask].index
         descriptions = news_df.loc[other_indices, 'description'].tolist()
-        other_classifications_dict, other_scores_dict = classify_batch(
-            descriptions,
-            candidate_labels,
-            hypothesis_template,
-            show_progress=True,
-        )
+        description_results = hierarchical_classify(descriptions, show_progress=True)
         for i, idx in enumerate(other_indices):
-            news_df.loc[idx, 'classification'] = other_classifications_dict[i]
-            news_df.loc[idx, 'classification_score'] = other_scores_dict[i]
+            news_df.loc[idx, 'classification'] = description_results['final_labels'][i]
+            news_df.loc[idx, 'classification_score'] = description_results['final_scores'][i]
+            news_df.loc[idx, 'classification_stage1'] = description_results['stage1_labels'][i]
+            news_df.loc[idx, 'classification_stage1_score'] = description_results['stage1_scores'][i]
 
     final_other = (news_df['classification'] == other_label).sum()
 

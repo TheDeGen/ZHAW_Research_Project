@@ -73,40 +73,54 @@ EMBEDDING_MODEL = 'paraphrase-multilingual-MiniLM-L12-v2'
 EMBEDDING_DIM = 384
 PCA_COMPONENTS = 50
 
-# Zero-shot classification model
+# Zero-shot classification settings
 ZEROSHOT_MODEL = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
 
-# Topic labels for zero-shot classification (German energy news)
+HIERARCHICAL_TOPIC_GROUPS = {
+    "Nachfrage": [
+        "der Stromverbrauch in Deutschland steigt",
+        "der Stromverbrauch in Deutschland fällt",
+    ],
+    "Angebot": [
+        "die Stromerzeugung aus Wind und Sonne steigt",
+        "die Stromerzeugung aus Wind und Sonne fällt",
+        "Störungen oder Ausfälle bei Netzen oder Kraftwerken verringern das Angebot",
+        "der Ausbau von LNG-Terminals, Pipelines oder Kraftwerken erhöht das Angebot",
+    ],
+    "Brennstoffpreise": [
+        "die Großhandelspreise für Erdgas steigen",
+        "die Großhandelspreise für Erdgas fallen",
+    ],
+    "Makrofinanzen": [
+        "steigende Zinsen oder hohe Inflation verschärfen die Marktlage",
+        "sinkende Zinsen oder nachlassende Inflation beruhigen die Marktlage",
+    ],
+    "Geopolitik": [
+        "geopolitische Spannungen oder Sanktionen verschärfen die Energieversorgung",
+        "geopolitische Entspannung oder gelockerte Sanktionen mindern Versorgungsrisiken",
+    ],
+    "Wetter": [
+        "Kälte, Flaute oder wenig Sonne erhöhen den Strompreisdruck in Deutschland",
+        "mildes Wetter, viel Wind oder viel Sonne entlasten die Strompreise in Deutschland",
+    ],
+    "Sonstiges": [
+        "kein Bezug zu Energie, Wetter oder Finanzmärkten",
+    ],
+}
+
+# Flattened list of candidate labels used in the final stage (kept for compatibility)
 CANDIDATE_LABELS = [
-    # Nachfrage (Demand)
-    "der Stromverbrauch in Deutschland steigt",
-    "der Stromverbrauch in Deutschland fällt",
-
-    # Angebot – Erneuerbare & Infrastruktur/Störungen (Supply)
-    "die Stromerzeugung aus Wind und Sonne steigt",
-    "die Stromerzeugung aus Wind und Sonne fällt",
-    "Störungen oder Ausfälle bei Netzen oder Kraftwerken verringern das Angebot",
-    "der Ausbau von LNG-Terminals, Pipelines oder Kraftwerken erhöht das Angebot",
-
-    # Brennstoffpreise (fokus Gas) (Fuel prices)
-    "die Großhandelspreise für Erdgas steigen",
-    "die Großhandelspreise für Erdgas fallen",
-
-    # Zinsen/Inflation
-    "steigende Zinsen oder hohe Inflation verschärfen die Marktlage",
-    "sinkende Zinsen oder nachlassende Inflation beruhigen die Marktlage",
-
-    # Geopolitik / Versorgung (Geopolitics / Supply)
-    "geopolitische Spannungen oder Sanktionen verschärfen die Energieversorgung",
-    "geopolitische Entspannung oder gelockerte Sanktionen mindern Versorgungsrisiken",
-
-    # Wetter (DE) (Weather)
-    "Kälte, Flaute oder wenig Sonne erhöhen den Strompreisdruck in Deutschland",
-    "mildes Wetter, viel Wind oder viel Sonne entlasten die Strompreise in Deutschland",
-
-    # Catch-all
-    "kein Bezug zu Energie, Wetter oder Finanzmärkten"
+    label for labels in HIERARCHICAL_TOPIC_GROUPS.values() for label in labels
 ]
+
+HIERARCHICAL_ROUTING_SETTINGS = {
+    "stage_order": ["Nachfrage", "Angebot", "Brennstoffpreise", "Makrofinanzen", "Geopolitik", "Wetter", "Sonstiges"],
+    "stage_thresholds": {
+        "stage1": 0.35,
+        "stage2": 0.25,
+    },
+    "allow_fallback_to_other": True,
+}
 
 HYPOTHESIS_TEMPLATE = "Der Artikel handelt von: {}."
 
