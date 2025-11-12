@@ -637,3 +637,422 @@ def plot_nlp_feature_importance(
     plt.show()
 
     return fig, (ax1, ax2)
+
+
+def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
+    """
+    Generate comprehensive EDA dashboard with multiple panels.
+
+    Args:
+        master_df: Master dataframe with energy and target data
+        news_df: News dataframe with classification data
+    """
+    fig = plt.figure(figsize=(20, 12))
+    gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
+
+    # 1. Target distribution
+    ax1 = fig.add_subplot(gs[0, 0])
+    target_col = 'spread_target_shift_24'
+    if target_col in master_df.columns:
+        target_counts = master_df[target_col].value_counts().sort_index()
+        colors = ['red', 'gray', 'green']
+        ax1.bar(target_counts.index, target_counts.values, color=colors, alpha=0.7, edgecolor='black')
+        ax1.set_xlabel('Target Class', fontweight='bold')
+        ax1.set_ylabel('Count', fontweight='bold')
+        ax1.set_title('Target Distribution', fontweight='bold', fontsize=12)
+        ax1.grid(alpha=0.3, axis='y')
+        for i, (idx, val) in enumerate(target_counts.items()):
+            pct = val / target_counts.sum() * 100
+            ax1.text(idx, val, f'{val}\n({pct:.1f}%)', ha='center', va='bottom')
+
+    # 2. Price spreads over time
+    ax2 = fig.add_subplot(gs[0, 1:])
+    if 'real_spread_abs' in master_df.columns:
+        spread_series = master_df['real_spread_abs']
+        ax2.plot(spread_series.index, spread_series.values, linewidth=0.5, alpha=0.7)
+        ax2.axhline(0, color='black', linestyle='--', linewidth=1)
+        ax2.set_xlabel('Time', fontweight='bold')
+        ax2.set_ylabel('Spread (EUR/MWh)', fontweight='bold')
+        ax2.set_title('Price Spread Over Time (Spot - Day Ahead)', fontweight='bold', fontsize=12)
+        ax2.grid(alpha=0.3)
+
+    # 3. News classification distribution
+    ax3 = fig.add_subplot(gs[1, 0])
+    if 'classification' in news_df.columns:
+        class_counts = news_df['classification'].value_counts().head(8)
+        ax3.barh(range(len(class_counts)), class_counts.values, color='steelblue', alpha=0.7)
+        ax3.set_yticks(range(len(class_counts)))
+        ax3.set_yticklabels([label[:40] + '...' if len(label) > 40 else label
+                             for label in class_counts.index], fontsize=9)
+        ax3.set_xlabel('Count', fontweight='bold')
+        ax3.set_title('Top 8 News Classifications', fontweight='bold', fontsize=12)
+        ax3.grid(alpha=0.3, axis='x')
+
+    # 4. Price correlation heatmap
+    ax4 = fig.add_subplot(gs[1, 1])
+    price_cols = ['Spot Price', 'Day Ahead Auction', 'real_spread_abs']
+    available_price_cols = [col for col in price_cols if col in master_df.columns]
+    if len(available_price_cols) >= 2:
+        corr = master_df[available_price_cols].corr()
+        sns.heatmap(corr, annot=True, fmt='.2f', cmap='coolwarm', center=0,
+                   square=True, ax=ax4, cbar_kws={"shrink": 0.8})
+        ax4.set_title('Price Feature Correlations', fontweight='bold', fontsize=12)
+
+    # 5. Load distribution
+    ax5 = fig.add_subplot(gs[1, 2])
+    if 'Load' in master_df.columns:
+        load_series = master_df['Load'].dropna()
+        ax5.hist(load_series, bins=50, color='orange', alpha=0.7, edgecolor='black')
+        ax5.set_xlabel('Load (MW)', fontweight='bold')
+        ax5.set_ylabel('Frequency', fontweight='bold')
+        ax5.set_title('Load Distribution', fontweight='bold', fontsize=12)
+        ax5.grid(alpha=0.3, axis='y')
+        ax5.axvline(load_series.mean(), color='red', linestyle='--', linewidth=2, label='Mean')
+        ax5.legend()
+
+    # 6. Hourly price patterns
+    ax6 = fig.add_subplot(gs[2, 0])
+    if 'hour' in master_df.columns and 'Spot Price' in master_df.columns:
+        hourly_price = master_df.groupby('hour')['Spot Price'].mean()
+        ax6.plot(hourly_price.index, hourly_price.values, marker='o', linewidth=2, markersize=4)
+        ax6.set_xlabel('Hour of Day', fontweight='bold')
+        ax6.set_ylabel('Average Spot Price (EUR/MWh)', fontweight='bold')
+        ax6.set_title('Average Spot Price by Hour', fontweight='bold', fontsize=12)
+        ax6.grid(alpha=0.3)
+        ax6.set_xticks(range(0, 24, 3))
+
+    # 7. Day of week patterns
+    ax7 = fig.add_subplot(gs[2, 1])
+    if 'day_of_week' in master_df.columns and 'real_spread_abs' in master_df.columns:
+        dow_spread = master_df.groupby('day_of_week')['real_spread_abs'].mean()
+        days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        ax7.bar(range(7), dow_spread.values, color='teal', alpha=0.7, edgecolor='black')
+        ax7.set_xticks(range(7))
+        ax7.set_xticklabels(days)
+        ax7.set_ylabel('Average Spread (EUR/MWh)', fontweight='bold')
+        ax7.set_title('Average Spread by Day of Week', fontweight='bold', fontsize=12)
+        ax7.grid(alpha=0.3, axis='y')
+
+    # 8. News volume over time
+    ax8 = fig.add_subplot(gs[2, 2])
+    if hasattr(news_df.index, 'to_period'):
+        news_daily = news_df.groupby(news_df.index.to_period('D')).size()
+        ax8.plot(news_daily.index.to_timestamp(), news_daily.values, linewidth=1.5, color='purple')
+        ax8.set_xlabel('Date', fontweight='bold')
+        ax8.set_ylabel('Number of Articles', fontweight='bold')
+        ax8.set_title('News Volume Over Time', fontweight='bold', fontsize=12)
+        ax8.grid(alpha=0.3)
+        fig.autofmt_xdate()
+
+    fig.suptitle('Exploratory Data Analysis Dashboard', fontsize=16, fontweight='bold', y=0.995)
+    plt.show()
+
+
+def plot_embedding_quality(news_df: pd.DataFrame, n_samples: int = 500, perplexity: int = 30):
+    """
+    Visualize embedding quality using UMAP/t-SNE dimensionality reduction.
+
+    Args:
+        news_df: News dataframe with 'embedding' and 'classification' columns
+        n_samples: Number of samples to visualize (for performance)
+        perplexity: t-SNE perplexity parameter
+    """
+    if 'embedding' not in news_df.columns:
+        print("No embeddings found in news_df. Skipping visualization.")
+        return
+
+    # Sample if needed
+    if len(news_df) > n_samples:
+        news_sample = news_df.sample(n_samples, random_state=42)
+    else:
+        news_sample = news_df.copy()
+
+    # Extract embeddings
+    embeddings = np.vstack(news_sample['embedding'].values)
+    labels = news_sample['classification'].values if 'classification' in news_sample.columns else None
+
+    fig, axes = plt.subplots(1, 2, figsize=(18, 7))
+
+    # UMAP visualization
+    try:
+        import umap
+        reducer_umap = umap.UMAP(n_components=2, random_state=42, n_neighbors=15, min_dist=0.1)
+        embedding_2d_umap = reducer_umap.fit_transform(embeddings)
+
+        if labels is not None:
+            unique_labels = pd.Series(labels).value_counts().head(10).index
+            colors = plt.cm.tab10(np.linspace(0, 1, len(unique_labels)))
+
+            for i, label in enumerate(unique_labels):
+                mask = labels == label
+                axes[0].scatter(embedding_2d_umap[mask, 0], embedding_2d_umap[mask, 1],
+                              c=[colors[i]], label=label[:30], alpha=0.3, s=100)
+            axes[0].legend(loc='best', fontsize=8, ncol=2)
+        else:
+            axes[0].scatter(embedding_2d_umap[:, 0], embedding_2d_umap[:, 1],
+                          c='steelblue', alpha=0.3, s=100)
+
+        axes[0].set_xlabel('UMAP Dimension 1', fontweight='bold')
+        axes[0].set_ylabel('UMAP Dimension 2', fontweight='bold')
+        axes[0].set_title('Embedding Visualization (UMAP)', fontweight='bold', fontsize=14)
+        axes[0].grid(alpha=0.3)
+    except ImportError:
+        axes[0].text(0.5, 0.5, 'UMAP not installed\npip install umap-learn',
+                    ha='center', va='center', fontsize=12)
+        axes[0].set_title('UMAP (Not Available)', fontweight='bold')
+
+    # t-SNE visualization
+    try:
+        from sklearn.manifold import TSNE
+        tsne = TSNE(n_components=2, random_state=42, perplexity=min(perplexity, len(embeddings)-1))
+        embedding_2d_tsne = tsne.fit_transform(embeddings)
+
+        if labels is not None:
+            unique_labels = pd.Series(labels).value_counts().head(10).index
+            colors = plt.cm.tab10(np.linspace(0, 1, len(unique_labels)))
+
+            for i, label in enumerate(unique_labels):
+                mask = labels == label
+                axes[1].scatter(embedding_2d_tsne[mask, 0], embedding_2d_tsne[mask, 1],
+                              c=[colors[i]], label=label[:30], alpha=0.3, s=100)
+            axes[1].legend(loc='best', fontsize=8, ncol=2)
+        else:
+            axes[1].scatter(embedding_2d_tsne[:, 0], embedding_2d_tsne[:, 1],
+                          c='coral', alpha=0.3, s=100)
+
+        axes[1].set_xlabel('t-SNE Dimension 1', fontweight='bold')
+        axes[1].set_ylabel('t-SNE Dimension 2', fontweight='bold')
+        axes[1].set_title('Embedding Visualization (t-SNE)', fontweight='bold', fontsize=14)
+        axes[1].grid(alpha=0.3)
+    except Exception as e:
+        axes[1].text(0.5, 0.5, f't-SNE failed:\n{str(e)}', ha='center', va='center', fontsize=10)
+        axes[1].set_title('t-SNE (Failed)', fontweight='bold')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_learning_curves(
+    model,
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    cv_splitter,
+    scoring: str = 'f1_macro',
+    model_name: str = 'Model',
+    train_sizes: np.ndarray = None
+):
+    """
+    Plot learning curves to diagnose overfitting/underfitting.
+
+    Args:
+        model: Unfitted estimator
+        X_train: Training features
+        y_train: Training labels
+        cv_splitter: Cross-validation splitter
+        scoring: Scoring metric
+        model_name: Name for the plot title
+        train_sizes: Array of training sizes to evaluate
+    """
+    from sklearn.model_selection import learning_curve
+
+    if train_sizes is None:
+        train_sizes = np.linspace(0.1, 1.0, 10)
+
+    print(f"\n{'='*70}")
+    print(f"COMPUTING LEARNING CURVES FOR {model_name.upper()}")
+    print(f"{'='*70}")
+    print("This may take a few minutes...")
+
+    try:
+        train_sizes_abs, train_scores, val_scores = learning_curve(
+            model, X_train, y_train,
+            train_sizes=train_sizes,
+            cv=cv_splitter,
+            scoring=scoring,
+            n_jobs=-1,
+            random_state=42
+        )
+
+        train_mean = np.mean(train_scores, axis=1)
+        train_std = np.std(train_scores, axis=1)
+        val_mean = np.mean(val_scores, axis=1)
+        val_std = np.std(val_scores, axis=1)
+
+        fig, ax = plt.subplots(figsize=(12, 7))
+
+        # Plot training and validation scores
+        ax.plot(train_sizes_abs, train_mean, 'o-', color='blue', linewidth=2,
+               markersize=6, label='Training score')
+        ax.fill_between(train_sizes_abs, train_mean - train_std, train_mean + train_std,
+                        alpha=0.15, color='blue')
+
+        ax.plot(train_sizes_abs, val_mean, 'o-', color='red', linewidth=2,
+               markersize=6, label='Validation score')
+        ax.fill_between(train_sizes_abs, val_mean - val_std, val_mean + val_std,
+                        alpha=0.15, color='red')
+
+        # Add gap visualization
+        gap = train_mean - val_mean
+        ax.plot(train_sizes_abs, gap, '--', color='gray', linewidth=1.5,
+               alpha=0.7, label='Train-Val Gap')
+
+        ax.set_xlabel('Training Set Size', fontweight='bold', fontsize=12)
+        ax.set_ylabel(f'{scoring}', fontweight='bold', fontsize=12)
+        ax.set_title(f'{model_name} Learning Curves', fontweight='bold', fontsize=14)
+        ax.legend(loc='best', fontsize=11)
+        ax.grid(alpha=0.3)
+
+        # Annotate final scores
+        final_train = train_mean[-1]
+        final_val = val_mean[-1]
+        ax.text(0.02, 0.98,
+               f'Final Train: {final_train:.3f}\nFinal Val: {final_val:.3f}\nGap: {gap[-1]:.3f}',
+               transform=ax.transAxes, fontsize=10, verticalalignment='top',
+               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+        plt.tight_layout()
+        plt.show()
+
+        print(f"✓ Learning curves complete")
+        print(f"  Final training score: {final_train:.4f}")
+        print(f"  Final validation score: {final_val:.4f}")
+        print(f"  Train-val gap: {gap[-1]:.4f}")
+
+        if gap[-1] > 0.1:
+            print("  ⚠ Warning: Large gap suggests overfitting")
+        elif val_mean[-1] < 0.5:
+            print("  ⚠ Warning: Low validation score suggests underfitting")
+
+        print(f"{'='*70}\n")
+
+    except Exception as e:
+        print(f"✗ Learning curve generation failed: {e}")
+        print(f"{'='*70}\n")
+
+
+def plot_feature_importance_shap(
+    model,
+    X_test: pd.DataFrame,
+    feature_names: list,
+    model_name: str = 'Model',
+    max_display: int = 20
+):
+    """
+    Plot SHAP feature importance values.
+
+    Args:
+        model: Fitted model
+        X_test: Test features
+        feature_names: List of feature names
+        model_name: Name for the plot title
+        max_display: Maximum number of features to display
+    """
+    try:
+        import shap
+
+        print(f"\n{'='*70}")
+        print(f"COMPUTING SHAP VALUES FOR {model_name.upper()}")
+        print(f"{'='*70}")
+
+        # Create explainer based on model type
+        if hasattr(model, 'tree_'):
+            explainer = shap.TreeExplainer(model)
+        else:
+            # Use KernelExplainer for non-tree models (slower)
+            explainer = shap.KernelExplainer(model.predict_proba, shap.sample(X_test, 100))
+
+        shap_values = explainer.shap_values(X_test[:500])  # Limit to 500 samples for speed
+
+        # For multiclass, select the first class
+        if isinstance(shap_values, list):
+            shap_values_plot = shap_values[0]
+        else:
+            shap_values_plot = shap_values
+
+        # Summary plot
+        plt.figure(figsize=(12, 8))
+        shap.summary_plot(shap_values_plot, X_test[:500],
+                         feature_names=feature_names,
+                         max_display=max_display, show=False)
+        plt.title(f'{model_name} - SHAP Feature Importance', fontweight='bold', fontsize=14)
+        plt.tight_layout()
+        plt.show()
+
+        print(f"✓ SHAP analysis complete")
+        print(f"{'='*70}\n")
+
+    except ImportError:
+        print("SHAP not installed. Install with: pip install shap")
+    except Exception as e:
+        print(f"SHAP visualization failed: {e}")
+
+
+def plot_permutation_importance(
+    model,
+    X_test: pd.DataFrame,
+    y_test: np.ndarray,
+    feature_names: list,
+    model_name: str = 'Model',
+    n_repeats: int = 10,
+    top_n: int = 20
+):
+    """
+    Plot permutation feature importance.
+
+    Args:
+        model: Fitted model
+        X_test: Test features
+        y_test: Test labels
+        feature_names: List of feature names
+        model_name: Name for the plot title
+        n_repeats: Number of times to permute each feature
+        top_n: Number of top features to display
+    """
+    from sklearn.inspection import permutation_importance
+
+    print(f"\n{'='*70}")
+    print(f"COMPUTING PERMUTATION IMPORTANCE FOR {model_name.upper()}")
+    print(f"{'='*70}")
+
+    try:
+        # Compute permutation importance
+        result = permutation_importance(
+            model, X_test, y_test,
+            n_repeats=n_repeats,
+            random_state=42,
+            n_jobs=-1
+        )
+
+        # Sort by importance
+        sorted_idx = result.importances_mean.argsort()[::-1][:top_n]
+
+        fig, ax = plt.subplots(figsize=(12, max(8, len(sorted_idx) * 0.4)))
+
+        # Plot
+        box_data = [result.importances[idx] for idx in sorted_idx]
+        positions = np.arange(len(sorted_idx))
+
+        bp = ax.boxplot(box_data, positions=positions, vert=False, patch_artist=True,
+                       boxprops=dict(facecolor='lightblue', alpha=0.7),
+                       medianprops=dict(color='red', linewidth=2))
+
+        ax.set_yticks(positions)
+        ax.set_yticklabels([feature_names[i] for i in sorted_idx])
+        ax.set_xlabel('Decrease in Score', fontweight='bold', fontsize=12)
+        ax.set_title(f'{model_name} - Permutation Feature Importance (Top {top_n})',
+                    fontweight='bold', fontsize=14)
+        ax.grid(alpha=0.3, axis='x')
+
+        plt.tight_layout()
+        plt.show()
+
+        print(f"✓ Permutation importance complete")
+        print(f"  Top 5 features:")
+        for i, idx in enumerate(sorted_idx[:5], 1):
+            print(f"    {i}. {feature_names[idx]}: {result.importances_mean[idx]:.4f} "
+                 f"± {result.importances_std[idx]:.4f}")
+        print(f"{'='*70}\n")
+
+    except Exception as e:
+        print(f"Permutation importance failed: {e}")
+        print(f"{'='*70}\n")

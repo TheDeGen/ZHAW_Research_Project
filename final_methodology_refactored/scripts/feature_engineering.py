@@ -58,12 +58,12 @@ def run_embedding_stage(
     primary_device = device_config.get('device', 'cpu')
     effective_batch_size = batch_size or device_config.get("optimal_batch_size", 32)
     hf_device = device_utils.resolve_hf_device(primary_device)
-    torch_dtype = torch.float16 if hf_device in (0, "cuda") else torch.float32
+    dtype = torch.float16 if hf_device in (0, "cuda") else torch.float32
 
     pipeline_kwargs = {
         "model": model_name,
         "batch_size": effective_batch_size,
-        "torch_dtype": torch_dtype,
+        "dtype": dtype,
     }
 
     if hf_device != -1:
@@ -71,7 +71,7 @@ def run_embedding_stage(
             pipeline_kwargs["device"] = hf_device
         else:
             print("⚠️ Hugging Face accelerate is not installed; zero-shot classifier will run on CPU.")
-            pipeline_kwargs["torch_dtype"] = torch.float32
+            pipeline_kwargs["dtype"] = torch.float32
 
     def instantiate_zero_shot(**kwargs):
         return pipeline("zero-shot-classification", **kwargs)
@@ -95,7 +95,7 @@ def run_embedding_stage(
         if hf_device == "mps" and "mps" in message.lower():
             print("⚠️ MPS pipeline creation failed; falling back to CPU.")
             pipeline_kwargs.pop("device", None)
-            pipeline_kwargs["torch_dtype"] = torch.float32
+            pipeline_kwargs["dtype"] = torch.float32
             classifier = instantiate_zero_shot(**pipeline_kwargs)
             resolved_hf_device = "cpu"
         else:
@@ -121,14 +121,48 @@ def run_embedding_stage(
         if show_progress:
             print(f"Processing {len(filtered_texts)} texts with batch_size={effective_batch_size}")
 
-        results = classifier(
-            list(filtered_texts),
-            labels,
-            hypothesis_template=hypothesis_template,
-            multi_label=False,
-        )
-        if isinstance(results, dict):
-            results = [results]
+        try:
+            # Process all texts in one call (pipeline handles batching internally)
+            results = classifier(
+                list(filtered_texts),
+                labels,
+                hypothesis_template=hypothesis_template,
+                multi_label=False,
+            )
+            if isinstance(results, dict):
+                results = [results]
+        except RuntimeError as gpu_exc:
+            # Handle GPU out-of-memory errors by processing in smaller chunks
+            if "out of memory" in str(gpu_exc).lower():
+                print(f"GPU OOM during classification; processing in smaller chunks...")
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                elif hasattr(torch, "mps") and torch.backends.mps.is_available():
+                    try:
+                        torch.mps.empty_cache()
+                    except AttributeError:
+                        pass
+
+                # Process in chunks
+                chunk_size = max(10, len(filtered_texts) // 4)
+                results = []
+                for chunk_start in tqdm(range(0, len(filtered_texts), chunk_size),
+                                       desc="Processing text chunks",
+                                       disable=not show_progress):
+                    chunk_end = min(chunk_start + chunk_size, len(filtered_texts))
+                    chunk_texts = list(filtered_texts[chunk_start:chunk_end])
+
+                    chunk_results = classifier(
+                        chunk_texts,
+                        labels,
+                        hypothesis_template=hypothesis_template,
+                        multi_label=False,
+                    )
+                    if isinstance(chunk_results, dict):
+                        chunk_results = [chunk_results]
+                    results.extend(chunk_results)
+            else:
+                raise
 
         classifications = {}
         scores = {}
@@ -244,13 +278,35 @@ def compute_embeddings(
     hf_device = primary_device if primary_device in {"cuda", "mps"} else "cpu"
     effective_batch_size = batch_size or device_config.get('optimal_batch_size', 32)
 
+    # Load model with device-specific optimizations
     model = SentenceTransformer(model_name, device=hf_device)
+
+    # GPU-specific optimizations
     if hf_device == "cuda":
         try:
+            # Enable fp16 for faster computation and reduced memory
             model = model.half()
-            print("Model converted to fp16 (half precision)")
+            print("Model converted to fp16 (half precision) for CUDA acceleration")
+
+            # Enable cudnn benchmarking for optimized convolutions
+            if torch.backends.cudnn.is_available():
+                torch.backends.cudnn.benchmark = True
+
+            # Increase batch size for GPU to maximize utilization
+            gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            if gpu_memory_gb >= 16:
+                effective_batch_size = max(effective_batch_size, 256)
+            elif gpu_memory_gb >= 8:
+                effective_batch_size = max(effective_batch_size, 128)
+
+            print(f"CUDA optimizations enabled: batch_size={effective_batch_size}")
         except Exception as exc:
-            print(f"fp16 conversion skipped: {exc}")
+            print(f"CUDA optimization skipped: {exc}")
+    elif hf_device == "mps":
+        # MPS-specific optimizations
+        print("Using MPS (Apple Silicon) acceleration for embeddings")
+        # MPS works better with moderate batch sizes
+        effective_batch_size = min(effective_batch_size, 128)
 
     texts = [
         (news_df.iloc[idx]['title'] if pd.notna(news_df.iloc[idx]['title']) else '').strip()
@@ -265,13 +321,40 @@ def compute_embeddings(
     print(f"Using batch_size={effective_batch_size} for embedding computation on device={hf_device}")
 
     try:
+        # Main encoding with optimized batch size
         embeddings_array = model.encode(
             list(valid_texts),
             batch_size=effective_batch_size,
             convert_to_numpy=True,
             show_progress_bar=show_progress,
             normalize_embeddings=False,
+            # Enable conversion to tensor for GPU optimization
+            convert_to_tensor=False,  # Keep as False to avoid memory issues
         )
+    except RuntimeError as gpu_exc:
+        # Handle CUDA/MPS out-of-memory errors
+        if "out of memory" in str(gpu_exc).lower():
+            print(f"GPU OOM error; reducing batch size and retrying...")
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif hasattr(torch, "mps") and torch.backends.mps.is_available():
+                try:
+                    torch.mps.empty_cache()
+                except AttributeError:
+                    pass
+
+            # Retry with smaller batch size
+            reduced_batch_size = max(16, effective_batch_size // 2)
+            print(f"Retrying with batch_size={reduced_batch_size}")
+            embeddings_array = model.encode(
+                list(valid_texts),
+                batch_size=reduced_batch_size,
+                convert_to_numpy=True,
+                show_progress_bar=show_progress,
+                normalize_embeddings=False,
+            )
+        else:
+            raise
     except Exception as primary_exc:
         print(f"Primary embedding pass failed ({primary_exc}); retrying with batch_size=32")
         embeddings_array = model.encode(
@@ -321,10 +404,11 @@ def compute_time_decayed_topic_counts(
     master_df: pd.DataFrame,
     lookback_window: int = 336,
     decay_lambda: float = 0.05,
-    verbose: bool = True
+    verbose: bool = True,
+    use_gpu: bool = True,
 ) -> pd.DataFrame:
     """
-    Compute time-decayed weighted counts for each topic.
+    Compute time-decayed weighted counts for each topic with GPU acceleration support.
 
     Weight formula: weight = e^(-lambda * hours_since_publication)
 
@@ -334,6 +418,7 @@ def compute_time_decayed_topic_counts(
         lookback_window: Number of hours to look back (default: 336h = 2 weeks)
         decay_lambda: Decay rate parameter (default: 0.05)
         verbose: Whether to print progress messages
+        use_gpu: Use GPU acceleration if available (CuPy)
 
     Returns:
         DataFrame with datetime index and columns for each topic's weighted count
@@ -350,7 +435,6 @@ def compute_time_decayed_topic_counts(
     if verbose:
         print(f"Computing time-decayed counts for {len(td_topics_df)} timestamps and {len(topics)} topics")
         print(f"Lookback window: {lookback_window}h, decay lambda: {decay_lambda}")
-        print("Using vectorized computation for improved performance...")
 
     timestamps = td_topics_df.index.values
     article_times = td_topic_news_df.index.values
@@ -361,25 +445,89 @@ def compute_time_decayed_topic_counts(
     article_topics_valid = article_topics[valid_mask]
 
     topic_to_idx = {topic: idx for idx, topic in enumerate(topics)}
-    weighted_counts_array = np.zeros((len(timestamps), len(topics)))
 
-    if verbose:
-        print(f"Processing {len(article_times_valid)} valid articles across {len(timestamps)} timestamps")
+    # Try GPU acceleration with CuPy
+    use_cupy = False
+    if use_gpu and torch.cuda.is_available():
+        try:
+            import cupy as cp
+            use_cupy = True
+            if verbose:
+                print("Using CuPy GPU acceleration for time-decay computation")
+        except ImportError:
+            if verbose:
+                print("CuPy not available; using vectorized NumPy computation")
 
-    for i, timestamp in enumerate(tqdm(timestamps, desc="Processing timestamps", leave=True, disable=not verbose)):
-        cutoff_time = timestamp - np.timedelta64(int(lookback_window), 'h')
-        time_mask = (article_times_valid >= cutoff_time) & (article_times_valid <= timestamp)
-        if not time_mask.any():
-            continue
+    if use_cupy:
+        # GPU-accelerated version
+        import cupy as cp
 
-        valid_article_times = article_times_valid[time_mask]
-        valid_article_topics = article_topics_valid[time_mask]
-        hours_since = (timestamp - valid_article_times).astype('timedelta64[h]').astype(float)
-        weights = np.exp(-decay_lambda * hours_since)
+        # Sort articles by time for efficient binary search
+        sort_idx = np.argsort(article_times_valid)
+        article_times_sorted = article_times_valid[sort_idx]
+        article_topics_sorted = article_topics_valid[sort_idx]
 
-        for topic in topics:
-            topic_mask = valid_article_topics == topic
-            weighted_counts_array[i, topic_to_idx[topic]] = np.sum(weights[topic_mask])
+        weighted_counts_array = np.zeros((len(timestamps), len(topics)), dtype=np.float32)
+
+        # Process in batches to avoid GPU memory issues
+        batch_size = min(1000, len(timestamps))
+        for batch_start in tqdm(range(0, len(timestamps), batch_size),
+                               desc="Processing timestamp batches (GPU)",
+                               disable=not verbose):
+            batch_end = min(batch_start + batch_size, len(timestamps))
+            batch_timestamps = timestamps[batch_start:batch_end]
+
+            for i, timestamp in enumerate(batch_timestamps):
+                cutoff_time = timestamp - np.timedelta64(int(lookback_window), 'h')
+                start_idx = np.searchsorted(article_times_sorted, cutoff_time, side='left')
+                end_idx = np.searchsorted(article_times_sorted, timestamp, side='right')
+
+                if start_idx >= end_idx:
+                    continue
+
+                window_times = article_times_sorted[start_idx:end_idx]
+                window_topics = article_topics_sorted[start_idx:end_idx]
+
+                # Move to GPU
+                window_times_gpu = cp.asarray(window_times.astype('datetime64[ns]').astype(np.int64))
+                timestamp_gpu = cp.array([timestamp.astype('datetime64[ns]').astype(np.int64)])
+
+                hours_since_gpu = (timestamp_gpu[0] - window_times_gpu) / (3600 * 1e9)  # Convert to hours
+                weights_gpu = cp.exp(-decay_lambda * hours_since_gpu)
+
+                # Compute weighted counts per topic
+                weights_cpu = cp.asnumpy(weights_gpu)
+                for topic in topics:
+                    topic_mask = window_topics == topic
+                    weighted_counts_array[batch_start + i, topic_to_idx[topic]] = np.sum(weights_cpu[topic_mask])
+    else:
+        # CPU-optimized vectorized version with binary search
+        sort_idx = np.argsort(article_times_valid)
+        article_times_sorted = article_times_valid[sort_idx]
+        article_topics_sorted = article_topics_valid[sort_idx]
+
+        weighted_counts_array = np.zeros((len(timestamps), len(topics)), dtype=np.float32)
+
+        if verbose:
+            print(f"Processing {len(article_times_valid)} valid articles across {len(timestamps)} timestamps")
+            print("Using optimized binary search and vectorization")
+
+        for i, timestamp in enumerate(tqdm(timestamps, desc="Processing timestamps", leave=True, disable=not verbose)):
+            cutoff_time = timestamp - np.timedelta64(int(lookback_window), 'h')
+            start_idx = np.searchsorted(article_times_sorted, cutoff_time, side='left')
+            end_idx = np.searchsorted(article_times_sorted, timestamp, side='right')
+
+            if start_idx >= end_idx:
+                continue
+
+            window_times = article_times_sorted[start_idx:end_idx]
+            window_topics = article_topics_sorted[start_idx:end_idx]
+            hours_since = (timestamp - window_times).astype('timedelta64[h]').astype(np.float32)
+            weights = np.exp(-decay_lambda * hours_since, dtype=np.float32)
+
+            for topic in topics:
+                topic_mask = window_topics == topic
+                weighted_counts_array[i, topic_to_idx[topic]] = np.sum(weights[topic_mask])
 
     for idx, topic in enumerate(topics):
         td_topics_df[topic] = weighted_counts_array[:, idx]
@@ -392,10 +540,11 @@ def compute_time_decayed_embeddings(
     master_df: pd.DataFrame,
     lookback_window: int = 336,
     decay_lambda: float = 0.05,
-    verbose: bool = True
+    verbose: bool = True,
+    use_gpu: bool = True,
 ) -> np.ndarray:
     """
-    Compute time-decayed weighted average embeddings (optimized version).
+    Compute time-decayed weighted average embeddings with GPU acceleration support.
 
     Weight formula: weight = e^(-lambda * hours_since_publication)
 
@@ -405,6 +554,7 @@ def compute_time_decayed_embeddings(
         lookback_window: Number of hours to look back (default: 336h = 2 weeks)
         decay_lambda: Decay rate parameter (default: 0.05)
         verbose: Whether to print progress messages
+        use_gpu: Use GPU acceleration if available (CuPy)
 
     Returns:
         Array of weighted average embeddings with shape (n_timestamps, embedding_dim)
@@ -458,35 +608,95 @@ def compute_time_decayed_embeddings(
     timestamps = master_df.index.values.astype('datetime64[ns]')
     weighted_embeddings_array = np.zeros((len(timestamps), embedding_dim), dtype=np.float32)
 
-    if verbose:
-        print(f"Processing {len(article_embeddings_array)} valid embeddings across {len(timestamps)} timestamps")
-        print("Using binary search for efficient article lookup...")
+    # Try GPU acceleration with CuPy
+    use_cupy = False
+    if use_gpu and torch.cuda.is_available():
+        try:
+            import cupy as cp
+            use_cupy = True
+            if verbose:
+                print(f"Processing {len(article_embeddings_array)} valid embeddings across {len(timestamps)} timestamps")
+                print("Using CuPy GPU acceleration with binary search for embeddings")
+        except ImportError:
+            if verbose:
+                print(f"Processing {len(article_embeddings_array)} valid embeddings across {len(timestamps)} timestamps")
+                print("Using CPU binary search for efficient article lookup...")
 
-    lookback_delta = np.timedelta64(int(lookback_window), 'h')
-    cutoff_times = timestamps - lookback_delta
+    if use_cupy:
+        # GPU-accelerated version
+        import cupy as cp
 
-    for i in tqdm(range(len(timestamps)), desc="Processing timestamps", disable=not verbose):
-        timestamp = timestamps[i]
-        cutoff_time = cutoff_times[i]
+        # Transfer embeddings to GPU
+        article_embeddings_gpu = cp.asarray(article_embeddings_array)
 
-        start_idx = np.searchsorted(article_times_valid, cutoff_time, side='left')
-        end_idx = np.searchsorted(article_times_valid, timestamp, side='right')
+        lookback_delta = np.timedelta64(int(lookback_window), 'h')
+        cutoff_times = timestamps - lookback_delta
 
-        if start_idx >= end_idx:
-            continue
+        # Process in batches to manage GPU memory
+        batch_size = min(500, len(timestamps))
+        for batch_start in tqdm(range(0, len(timestamps), batch_size),
+                               desc="Processing timestamp batches (GPU)",
+                               disable=not verbose):
+            batch_end = min(batch_start + batch_size, len(timestamps))
 
-        window_embeddings = article_embeddings_array[start_idx:end_idx]
-        window_times = article_times_valid[start_idx:end_idx]
+            for i in range(batch_start, batch_end):
+                timestamp = timestamps[i]
+                cutoff_time = cutoff_times[i]
 
-        hours_since = (timestamp - window_times).astype('timedelta64[h]').astype(np.float32)
-        weights = np.exp(-decay_lambda * hours_since, dtype=np.float32)
+                start_idx = np.searchsorted(article_times_valid, cutoff_time, side='left')
+                end_idx = np.searchsorted(article_times_valid, timestamp, side='right')
 
-        total_weight = np.sum(weights)
-        if total_weight > 1e-10:
-            weighted_sum = np.sum(weights[:, np.newaxis] * window_embeddings, axis=0)
-            weighted_embeddings_array[i] = weighted_sum / total_weight
-        else:
-            weighted_embeddings_array[i] = np.zeros(embedding_dim, dtype=np.float32)
+                if start_idx >= end_idx:
+                    continue
+
+                window_embeddings_gpu = article_embeddings_gpu[start_idx:end_idx]
+                window_times = article_times_valid[start_idx:end_idx]
+
+                hours_since = (timestamp - window_times).astype('timedelta64[h]').astype(np.float32)
+                weights_gpu = cp.exp(-decay_lambda * cp.asarray(hours_since))
+
+                total_weight = cp.sum(weights_gpu)
+                if float(total_weight) > 1e-10:
+                    weighted_sum_gpu = cp.sum(weights_gpu[:, cp.newaxis] * window_embeddings_gpu, axis=0)
+                    weighted_embeddings_array[i] = cp.asnumpy(weighted_sum_gpu / total_weight)
+                else:
+                    weighted_embeddings_array[i] = np.zeros(embedding_dim, dtype=np.float32)
+
+        # Clean up GPU memory
+        del article_embeddings_gpu
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    else:
+        # CPU-optimized version
+        if verbose:
+            print(f"Processing {len(article_embeddings_array)} valid embeddings across {len(timestamps)} timestamps")
+            print("Using binary search for efficient article lookup...")
+
+        lookback_delta = np.timedelta64(int(lookback_window), 'h')
+        cutoff_times = timestamps - lookback_delta
+
+        for i in tqdm(range(len(timestamps)), desc="Processing timestamps", disable=not verbose):
+            timestamp = timestamps[i]
+            cutoff_time = cutoff_times[i]
+
+            start_idx = np.searchsorted(article_times_valid, cutoff_time, side='left')
+            end_idx = np.searchsorted(article_times_valid, timestamp, side='right')
+
+            if start_idx >= end_idx:
+                continue
+
+            window_embeddings = article_embeddings_array[start_idx:end_idx]
+            window_times = article_times_valid[start_idx:end_idx]
+
+            hours_since = (timestamp - window_times).astype('timedelta64[h]').astype(np.float32)
+            weights = np.exp(-decay_lambda * hours_since, dtype=np.float32)
+
+            total_weight = np.sum(weights)
+            if total_weight > 1e-10:
+                weighted_sum = np.sum(weights[:, np.newaxis] * window_embeddings, axis=0)
+                weighted_embeddings_array[i] = weighted_sum / total_weight
+            else:
+                weighted_embeddings_array[i] = np.zeros(embedding_dim, dtype=np.float32)
 
     if verbose:
         print(f"\nCompleted time-decayed aggregation")

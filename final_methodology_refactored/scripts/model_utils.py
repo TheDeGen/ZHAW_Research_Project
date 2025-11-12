@@ -9,6 +9,8 @@ import pandas as pd
 from xgboost import XGBClassifier
 from lightgbm import LGBMClassifier
 from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.utils.class_weight import compute_class_weight
 
 from config import model_config
 
@@ -569,3 +571,176 @@ def evaluate_lgbm_models(
         },
         "label_encoder": label_encoder,
     }
+
+
+def compute_class_weights(y_train: np.ndarray) -> dict:
+    """
+    Compute class weights for imbalanced datasets.
+
+    Args:
+        y_train: Training labels
+
+    Returns:
+        Dictionary mapping class labels to weights
+    """
+    classes = np.unique(y_train)
+    weights = compute_class_weight('balanced', classes=classes, y=y_train)
+    return dict(zip(classes, weights))
+
+
+def apply_smote_resampling(X_train: pd.DataFrame, y_train: np.ndarray, random_state: int = 42):
+    """
+    Apply SMOTE (Synthetic Minority Over-sampling Technique) to balance classes.
+
+    Args:
+        X_train: Training features
+        y_train: Training labels
+        random_state: Random seed
+
+    Returns:
+        Tuple of (X_resampled, y_resampled)
+    """
+    try:
+        from imblearn.over_sampling import SMOTE
+
+        smote = SMOTE(random_state=random_state, k_neighbors=min(5, np.bincount(y_train).min() - 1))
+        X_resampled, y_resampled = smote.fit_resample(X_train, y_train)
+
+        print(f"Original class distribution: {np.bincount(y_train)}")
+        print(f"Resampled class distribution: {np.bincount(y_resampled)}")
+
+        return X_resampled, y_resampled
+    except ImportError:
+        print("Warning: imbalanced-learn not installed. Install with: pip install imbalanced-learn")
+        print("Returning original data without resampling.")
+        return X_train, y_train
+
+
+def calibrate_classifier(
+    model,
+    X_train: pd.DataFrame,
+    y_train: np.ndarray,
+    X_val: pd.DataFrame,
+    y_val: np.ndarray,
+    method: str = 'sigmoid',
+    cv: int | str = 5
+):
+    """
+    Calibrate classifier probabilities using validation set.
+
+    Args:
+        model: Fitted classifier
+        X_train: Training features (used for CV calibration if cv != 'prefit')
+        y_train: Training labels
+        X_val: Validation features
+        y_val: Validation labels
+        method: Calibration method ('sigmoid' for Platt scaling or 'isotonic')
+        cv: Number of CV folds or 'prefit' to use the fitted model
+
+    Returns:
+        Calibrated classifier
+    """
+    from sklearn.calibration import calibration_curve
+    import matplotlib.pyplot as plt
+
+    print(f"\n{'='*70}")
+    print(f"PROBABILITY CALIBRATION ({method.upper()})")
+    print(f"{'='*70}")
+
+    # Get uncalibrated probabilities
+    if hasattr(model, "predict_proba"):
+        y_val_proba_uncal = model.predict_proba(X_val)
+    else:
+        print("Model does not support predict_proba. Skipping calibration.")
+        return model
+
+    # Calibrate the model
+    if cv == 'prefit':
+        calibrated_model = CalibratedClassifierCV(model, method=method, cv='prefit')
+        calibrated_model.fit(X_val, y_val)
+    else:
+        calibrated_model = CalibratedClassifierCV(model, method=method, cv=cv)
+        calibrated_model.fit(X_train, y_train)
+
+    # Get calibrated probabilities
+    y_val_proba_cal = calibrated_model.predict_proba(X_val)
+
+    # For binary/multiclass, compute calibration curves for the positive class
+    if y_val_proba_uncal.shape[1] == 2:
+        # Binary classification
+        prob_true_uncal, prob_pred_uncal = calibration_curve(
+            y_val, y_val_proba_uncal[:, 1], n_bins=10, strategy='uniform'
+        )
+        prob_true_cal, prob_pred_cal = calibration_curve(
+            y_val, y_val_proba_cal[:, 1], n_bins=10, strategy='uniform'
+        )
+
+        print(f"✓ Calibration complete (binary classification)")
+    else:
+        # Multiclass - show calibration for class with most samples
+        print(f"✓ Calibration complete (multiclass: {y_val_proba_uncal.shape[1]} classes)")
+
+    return calibrated_model
+
+
+def optimize_classification_threshold(
+    y_true: np.ndarray,
+    y_proba: np.ndarray,
+    metric: str = 'f1',
+    class_of_interest: int = 1
+) -> tuple[float, float]:
+    """
+    Find optimal classification threshold by maximizing a metric.
+
+    Args:
+        y_true: True labels
+        y_proba: Predicted probabilities (for binary: probabilities of positive class)
+        metric: Metric to optimize ('f1', 'precision', 'recall', 'accuracy')
+        class_of_interest: Class to consider as positive (for binary classification)
+
+    Returns:
+        Tuple of (optimal_threshold, best_metric_value)
+    """
+    from sklearn.metrics import f1_score, precision_score, recall_score, accuracy_score
+
+    metric_funcs = {
+        'f1': f1_score,
+        'precision': precision_score,
+        'recall': recall_score,
+        'accuracy': accuracy_score
+    }
+
+    if metric not in metric_funcs:
+        raise ValueError(f"Unsupported metric: {metric}. Choose from {list(metric_funcs.keys())}")
+
+    metric_func = metric_funcs[metric]
+
+    # Try different thresholds
+    thresholds = np.linspace(0.1, 0.9, 81)
+    scores = []
+
+    for thresh in thresholds:
+        y_pred = (y_proba >= thresh).astype(int)
+        try:
+            if metric == 'accuracy':
+                score = metric_func(y_true, y_pred)
+            else:
+                score = metric_func(y_true, y_pred, zero_division=0)
+            scores.append(score)
+        except:
+            scores.append(0.0)
+
+    best_idx = np.argmax(scores)
+    optimal_threshold = thresholds[best_idx]
+    best_score = scores[best_idx]
+
+    print(f"\n{'='*70}")
+    print("THRESHOLD OPTIMIZATION")
+    print(f"{'='*70}")
+    print(f"Metric: {metric}")
+    print(f"Optimal threshold: {optimal_threshold:.3f}")
+    print(f"Best {metric}: {best_score:.4f}")
+    print(f"Default (0.5) {metric}: {scores[40]:.4f}")  # Index 40 corresponds to 0.5
+    print(f"{'='*70}\n")
+
+    return optimal_threshold, best_score

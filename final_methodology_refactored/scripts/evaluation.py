@@ -217,18 +217,39 @@ def _safe_multiclass_auc(y_true: np.ndarray, proba: np.ndarray) -> float:
     )
 
 
-def actions_to_returns(actions: np.ndarray, spread: pd.Series) -> pd.Series:
+def actions_to_returns(
+    actions: np.ndarray,
+    spread: pd.Series,
+    transaction_cost: float = 0.0,
+    transaction_cost_pct: float = 0.0
+) -> pd.Series:
     """
-    Convert trading actions to returns based on spread.
+    Convert trading actions to returns based on spread, accounting for transaction costs.
 
     Args:
         actions: Array of trading actions (-1, 0, 1)
         spread: Series of price spreads
+        transaction_cost: Fixed transaction cost per trade (EUR/MWh)
+        transaction_cost_pct: Percentage transaction cost (as decimal, e.g., 0.001 for 0.1%)
 
     Returns:
-        Series of returns
+        Series of returns after transaction costs
     """
+    # Base returns (before costs)
     returns = np.where(actions == 1, spread, np.where(actions == -1, -spread, 0.0))
+
+    # Apply transaction costs for non-zero actions
+    if transaction_cost > 0 or transaction_cost_pct > 0:
+        # Fixed cost
+        if transaction_cost > 0:
+            cost_fixed = np.where(actions != 0, transaction_cost, 0.0)
+            returns = returns - cost_fixed
+
+        # Percentage cost (applied to absolute spread value)
+        if transaction_cost_pct > 0:
+            cost_pct = np.where(actions != 0, np.abs(spread) * transaction_cost_pct, 0.0)
+            returns = returns - cost_pct
+
     return pd.Series(returns, index=spread.index)
 
 
@@ -254,32 +275,49 @@ def summarise_returns(
     volatility = returns.std(ddof=1)
     sharpe = (mean_return / volatility * np.sqrt(periods_per_year)) if volatility > 0 else np.nan
 
+    # Sortino ratio (downside deviation)
+    downside_returns = returns[returns < 0]
+    downside_std = downside_returns.std(ddof=1) if len(downside_returns) > 1 else np.nan
+    sortino = (mean_return / downside_std * np.sqrt(periods_per_year)) if downside_std > 0 else np.nan
+
+    # Win rate
+    n_trades = (returns != 0).sum()
+    n_wins = (returns > 0).sum()
+    win_rate = (n_wins / n_trades * 100) if n_trades > 0 else 0.0
+
     return {
         "Strategy": strategy_label,
         "Total Return": cumulative.iloc[-1] if not cumulative.empty else 0.0,
         "Average Return": mean_return,
         "Volatility": volatility,
         "Sharpe (annualised)": sharpe,
+        "Sortino (annualised)": sortino,
         "Max Drawdown": drawdown.min() if not drawdown.empty else 0.0,
+        "Win Rate (%)": win_rate,
+        "Number of Trades": int(n_trades),
     }
 
 
 def compute_strategy_returns(
     action_map: dict[str, np.ndarray],
-    spread: pd.Series
+    spread: pd.Series,
+    transaction_cost: float = 0.0,
+    transaction_cost_pct: float = 0.0
 ) -> dict[str, pd.Series]:
     """
-    Convert a mapping of strategy actions to return series.
+    Convert a mapping of strategy actions to return series with transaction costs.
 
     Args:
         action_map: Mapping from strategy name to action array.
         spread: Price spread series.
+        transaction_cost: Fixed transaction cost per trade (EUR/MWh)
+        transaction_cost_pct: Percentage transaction cost (as decimal)
 
     Returns:
         Mapping from strategy name to return series.
     """
     return {
-        name: actions_to_returns(actions, spread)
+        name: actions_to_returns(actions, spread, transaction_cost, transaction_cost_pct)
         for name, actions in action_map.items()
     }
 
