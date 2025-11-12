@@ -141,15 +141,59 @@ def build_xgb_classifier(random_state: int = 42, device_config: dict | None = No
     }
 
     if device_config is None:
-        params.update({'tree_method': 'hist', 'predictor': 'auto', 'n_jobs': -1})
+        params.update({'tree_method': 'hist', 'n_jobs': -1})
     else:
+        tree_method = device_config.get('tree_method', 'hist')
+        device_type = device_config.get('device', 'cpu')
+
         params.update({
-            'tree_method': device_config.get('tree_method', 'hist'),
-            'predictor': device_config.get('predictor', 'auto'),
+            'tree_method': tree_method,
             'n_jobs': device_config.get('n_jobs', -1)
         })
 
+        # Only add predictor parameter for GPU training (not for CPU hist or MPS)
+        if tree_method == 'gpu_hist' and device_type == 'cuda':
+            params['predictor'] = device_config.get('predictor', 'gpu_predictor')
+
     return XGBClassifier(**params)
+
+
+def enrich_with_model_predictions(
+    model,
+    dataframes: dict[str, pd.DataFrame],
+    feature_columns: list[str],
+    prediction_prefix: str = "model"
+) -> dict[str, pd.DataFrame]:
+    """
+    Enrich dataframes with model predictions as additional features.
+
+    Args:
+        model: Fitted model with predict_proba method
+        dataframes: Dict mapping dataset name (e.g., 'train', 'val', 'test') to DataFrame
+        feature_columns: List of feature columns to use for prediction
+        prediction_prefix: Prefix for new prediction columns
+
+    Returns:
+        Dict of enriched DataFrames with same keys as input
+    """
+    enriched = {}
+
+    for name, df in dataframes.items():
+        X = df[feature_columns].fillna(0)
+        proba = model.predict_proba(X)
+
+        df_enriched = df.copy()
+
+        # Add probability columns for each class
+        for i in range(proba.shape[1]):
+            df_enriched[f"{prediction_prefix}_prob_class{i}"] = proba[:, i]
+
+        # Add predicted class
+        df_enriched[f"{prediction_prefix}_pred"] = proba.argmax(axis=1)
+
+        enriched[name] = df_enriched
+
+    return enriched
 
 
 def map_target_to_binary(y: pd.Series) -> np.ndarray:
