@@ -135,6 +135,12 @@ def build_xgb_classifier(random_state: int = 42, device_config: dict | None = No
 
     Returns:
         Configured XGBClassifier instance
+
+    Note:
+        When using GPU (device='cuda:0') with pandas DataFrames, you may see a warning
+        about "Falling back to prediction using DMatrix due to mismatched devices."
+        This is expected and benign - XGBoost automatically handles CPU->GPU data transfer
+        during training and prediction. The performance impact is minimal for typical datasets.
     """
     # Configure objective and metric based on number of classes
     if num_classes == 2:
@@ -163,11 +169,22 @@ def build_xgb_classifier(random_state: int = 42, device_config: dict | None = No
         tree_method = device_config.get('tree_method', 'hist')
         xgb_device = device_config.get('xgb_device', 'cpu')
 
-        params.update({
-            'tree_method': tree_method,
-            'device': xgb_device,
-            'n_jobs': device_config.get('n_jobs', -1)
-        })
+        # When using CUDA with pandas DataFrames, use 'hist' tree_method
+        # to avoid device mismatch warnings. XGBoost will automatically
+        # use GPU acceleration when device='cuda:0' is set.
+        if xgb_device.startswith('cuda'):
+            # Use hist tree_method which handles CPU->GPU transfer internally
+            params.update({
+                'tree_method': 'hist',
+                'device': xgb_device,
+                'n_jobs': device_config.get('n_jobs', 1)  # GPU training is serial
+            })
+        else:
+            params.update({
+                'tree_method': tree_method,
+                'device': xgb_device,
+                'n_jobs': device_config.get('n_jobs', -1)
+            })
 
     return XGBClassifier(**params)
 
@@ -257,7 +274,17 @@ def run_xgb_random_search(
     Returns:
         Tuple of (fitted RandomizedSearchCV object, feature_columns list)
     """
+    import warnings
     from scipy import stats
+
+    # Suppress expected XGBoost device mismatch warning when using GPU with pandas DataFrames
+    # XGBoost automatically handles CPU->GPU transfer, so this warning is benign
+    warnings.filterwarnings(
+        'ignore',
+        message='.*Falling back to prediction using DMatrix due to mismatched devices.*',
+        category=UserWarning,
+        module='xgboost'
+    )
 
     if param_distributions is None:
         param_distributions = {
@@ -364,8 +391,19 @@ def build_lgbm_classifier(
         params.setdefault("n_jobs", -1)
         params.setdefault("device_type", "cpu")
     else:
-        params["n_jobs"] = device_config.get("n_jobs", -1)
-        params["device_type"] = "gpu" if device_config.get("lgbm_device") == "gpu" else "cpu"
+        lgbm_device = device_config.get("lgbm_device")
+        if lgbm_device == "gpu":
+            # Avoid nested parallelism on GPU backends; one host thread is sufficient
+            estimator_jobs = device_config.get("lgbm_n_jobs") or device_config.get("n_jobs") or 1
+            params["n_jobs"] = max(1, estimator_jobs)
+            params["device_type"] = "gpu"
+        else:
+            params["n_jobs"] = device_config.get("n_jobs", -1)
+            params["device_type"] = "cpu"
+
+    # Mirror LightGBM's internal thread pool with num_threads when explicitly set
+    if params.get("n_jobs", -1) > 0:
+        params["num_threads"] = params["n_jobs"]
 
     return LGBMClassifier(**params)
 
@@ -378,7 +416,7 @@ def run_lgbm_grid_search(
     scoring: str = "f1_macro",
     device_config: dict | None = None,
     random_state: int = 42,
-    verbose: int = 1,
+    verbose: int = 0,
 ) -> GridSearchCV:
     """
     Run GridSearchCV for a LightGBM classifier.
@@ -400,12 +438,8 @@ def run_lgbm_grid_search(
     y_array = np.asarray(y_train)
     num_classes = int(np.unique(y_array).size)
 
-    # Compute and display class weights
+    # Compute class weights for balanced training
     class_weights = compute_class_weights(y_array)
-    print(f"\nClass distribution in training data:")
-    unique, counts = np.unique(y_array, return_counts=True)
-    for cls, cnt in zip(unique, counts):
-        print(f"  Class {cls}: {cnt} samples ({cnt/len(y_array)*100:.1f}%) - Weight: {class_weights[cls]:.3f}")
 
     estimator = build_lgbm_classifier(
         num_classes=num_classes,
@@ -413,7 +447,19 @@ def run_lgbm_grid_search(
         device_config=device_config,
     )
 
-    n_jobs = device_config.get("n_jobs", -1) if device_config else -1
+    if device_config:
+        lgbm_device = device_config.get("lgbm_device")
+        if lgbm_device == "gpu":
+            # Serialise CV to prevent libgomp thread exhaustion when LightGBM also parallelises
+            n_jobs = max(1, device_config.get("grid_search_n_jobs", 1))
+            if n_jobs != 1:
+                print(f"⚠ Overriding LightGBM GridSearchCV n_jobs={n_jobs} for GPU execution.")
+            else:
+                print("☑ Running LightGBM GridSearchCV serially to avoid GPU thread oversubscription.")
+        else:
+            n_jobs = device_config.get("n_jobs", -1)
+    else:
+        n_jobs = -1
 
     grid = GridSearchCV(
         estimator=estimator,
@@ -1098,14 +1144,6 @@ def train_lightgbm_pair(
 
     signal_column_rename_map = dict(zip(signal_feature_columns, signal_feature_columns_sanitized))
     baseline_column_rename_map = dict(zip(baseline_feature_columns, baseline_feature_columns_sanitized))
-
-    # Display class distribution once (applies to both models)
-    print("\nClass distribution in training data:")
-    unique, counts = np.unique(y_train, return_counts=True)
-    for cls, cnt in zip(unique, counts):
-        cls_label = label_encoder.classes_[cls]
-        print(f"  Class {cls_label}: {cnt} samples ({cnt/len(y_train)*100:.1f}%)")
-    print()
 
     # --- Train Signal Model ---
     print("Training SIGNAL model (baseline + news features + XGBoost predictions)...")

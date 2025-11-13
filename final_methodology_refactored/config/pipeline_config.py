@@ -72,7 +72,6 @@ DEFAULT_ALPHAS = np.logspace(-3, 3, 13)
 # Sentence embedding model
 EMBEDDING_MODEL = 'paraphrase-multilingual-MiniLM-L12-v2'
 EMBEDDING_DIM = 384
-PCA_COMPONENTS = 50
 
 # Zero-shot classification settings
 ZEROSHOT_MODEL = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"

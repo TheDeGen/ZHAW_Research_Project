@@ -12,7 +12,6 @@ from pathlib import Path
 from tqdm import tqdm
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer
-from sklearn.decomposition import PCA
 from sklearn.linear_model import RidgeClassifierCV
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score, f1_score
@@ -971,6 +970,74 @@ def reduce_embeddings_gpu_first(
     return reduced_df
 
 
+def _process_single_parameter_combination(
+    lookback: int,
+    decay_lambda: float,
+    news_df: pd.DataFrame,
+    master_df: pd.DataFrame,
+    n_components: int,
+    use_umap: bool,
+    random_state: int,
+) -> tuple[tuple[int, float], dict[str, pd.DataFrame]]:
+    """
+    Process a single (lookback_window, decay_lambda) parameter combination.
+
+    This helper function is designed to be called in parallel by joblib.
+
+    Args:
+        lookback: Lookback window in hours
+        decay_lambda: Exponential decay parameter
+        news_df: Preprocessed news dataframe with classifications and embeddings
+        master_df: Master dataframe with target timestamps
+        n_components: Number of components for dimensionality reduction
+        use_umap: Whether to use UMAP (otherwise PCA)
+        random_state: Random seed (kept for backward compatibility)
+
+    Returns:
+        Tuple of (params_key, feature_dict) where params_key is (lookback, decay_lambda)
+    """
+    params_key = (lookback, decay_lambda)
+
+    # Compute time-decayed topic counts
+    td_topics = compute_time_decayed_topic_counts(
+        news_df=news_df,
+        master_df=master_df,
+        lookback_window=lookback,
+        decay_lambda=decay_lambda,
+        verbose=False,
+    )
+
+    # Compute time-decayed embeddings
+    weighted_embeddings = compute_time_decayed_embeddings(
+        news_df=news_df,
+        master_df=master_df,
+        lookback_window=lookback,
+        decay_lambda=decay_lambda,
+        verbose=False,
+    )
+
+    # Handle NaNs prior to dimensionality reduction
+    nan_mask = np.isnan(weighted_embeddings).any(axis=1)
+    embeddings_clean = weighted_embeddings.copy()
+    embeddings_clean[nan_mask] = 0.0
+
+    # Reduce embeddings
+    cache_label = f"td_embeddings_lw{lookback}_dl{decay_lambda}"
+    td_embeddings = reduce_embeddings_gpu_first(
+        embeddings=embeddings_clean,
+        index=master_df.index,
+        cache_label=cache_label,
+        n_components=n_components,
+        use_umap=use_umap,
+        random_state=random_state,
+    )
+
+    return params_key, {
+        "td_topics": td_topics,
+        "td_embeddings": td_embeddings,
+    }
+
+
 def precompute_time_decay_feature_sets(
     news_df: pd.DataFrame,
     master_df: pd.DataFrame,
@@ -981,9 +1048,12 @@ def precompute_time_decay_feature_sets(
     random_state: int = 42,
     device_config: dict | None = None,
     verbose: bool = True,
+    n_jobs: int = -1,
 ) -> dict[tuple[int, float], dict[str, pd.DataFrame]]:
     """
     Precompute time-decayed topic counts and reduced embeddings for a grid of parameters.
+
+    This function now processes parameter combinations in parallel using joblib.
 
     Args:
         news_df: Preprocessed news dataframe with zero-shot classifications and embeddings.
@@ -995,6 +1065,9 @@ def precompute_time_decay_feature_sets(
         random_state: Random seed for reproducibility.
         device_config: Optional device configuration for logging downstream usage.
         verbose: Print progress information.
+        n_jobs: Number of parallel jobs (-1 uses all available cores).
+                Note: When using GPU acceleration (CuPy/cuML), consider using n_jobs=1
+                to avoid GPU contention, or ensure your GPU supports concurrent execution.
 
     Returns:
         Dictionary keyed by (lookback_window, decay_lambda) tuples containing:
@@ -1006,58 +1079,38 @@ def precompute_time_decay_feature_sets(
     if not isinstance(master_df.index, pd.DatetimeIndex):
         raise ValueError("master_df must have a DatetimeIndex for time-based aggregation.")
 
-    feature_cache: dict[tuple[int, float], dict[str, pd.DataFrame]] = {}
     total_combinations = len(lookback_windows) * len(decay_lambdas)
 
     if verbose:
         print(f"Precomputing time-decayed features for {total_combinations} parameter combinations...")
+        print(f"Parallelizing across parameter combinations using joblib (n_jobs={n_jobs})...\n")
 
-    combination_idx = 0
-    for lookback in lookback_windows:
-        for decay_lambda in decay_lambdas:
-            combination_idx += 1
-            params_key = (lookback, decay_lambda)
-            if verbose:
-                print(
-                    f"[{combination_idx}/{total_combinations}] "
-                    f"lookback={lookback}h, decay_lambda={decay_lambda}"
-                )
+    # Create list of all parameter combinations
+    param_combinations = [
+        (lookback, decay_lambda)
+        for lookback in lookback_windows
+        for decay_lambda in decay_lambdas
+    ]
 
-            td_topics = compute_time_decayed_topic_counts(
-                news_df=news_df,
-                master_df=master_df,
-                lookback_window=lookback,
-                decay_lambda=decay_lambda,
-                verbose=False,
-            )
+    # Process combinations in parallel
+    results = Parallel(n_jobs=n_jobs, verbose=10 if verbose else 0)(
+        delayed(_process_single_parameter_combination)(
+            lookback=lookback,
+            decay_lambda=decay_lambda,
+            news_df=news_df,
+            master_df=master_df,
+            n_components=n_components,
+            use_umap=use_umap,
+            random_state=random_state,
+        )
+        for lookback, decay_lambda in param_combinations
+    )
 
-            weighted_embeddings = compute_time_decayed_embeddings(
-                news_df=news_df,
-                master_df=master_df,
-                lookback_window=lookback,
-                decay_lambda=decay_lambda,
-                verbose=False,
-            )
+    # Convert results list to dictionary
+    feature_cache: dict[tuple[int, float], dict[str, pd.DataFrame]] = dict(results)
 
-            # Handle NaNs prior to dimensionality reduction (mirror notebook logic)
-            nan_mask = np.isnan(weighted_embeddings).any(axis=1)
-            embeddings_clean = weighted_embeddings.copy()
-            embeddings_clean[nan_mask] = 0.0
-
-            cache_label = f"td_embeddings_lw{lookback}_dl{decay_lambda}"
-            td_embeddings = reduce_embeddings_gpu_first(
-                embeddings=embeddings_clean,
-                index=master_df.index,
-                cache_label=cache_label,
-                n_components=n_components,
-                use_umap=use_umap,
-                random_state=random_state,
-            )
-
-            feature_cache[params_key] = {
-                "td_topics": td_topics,
-                "td_embeddings": td_embeddings,
-            }
+    if verbose:
+        print(f"\n✓ Completed precomputation of {len(feature_cache)} parameter combinations")
 
     return feature_cache
 
@@ -1361,10 +1414,10 @@ def grid_search_time_decay_params(
         reverse=True
     )
 
-    top_results = results_sorted[:3]
+    top_results = results_sorted[:5]
 
     print(f"{'='*80}")
-    print("TOP 3 PARAMETER COMBINATIONS:")
+    print("TOP 5 PARAMETER COMBINATIONS:")
     print(f"{'='*80}")
     for idx, result in enumerate(top_results, 1):
         print(
