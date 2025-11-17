@@ -9,8 +9,9 @@ Contains model-specific hyperparameters and configurations.
 # ============================================================================
 
 XGBOOST_BASE_PARAMS = {
-    'objective': 'binary:logistic',
-    'eval_metric': 'logloss',
+    'objective': 'multi:softprob',
+    'eval_metric': 'mlogloss',
+    'num_class': 3,
     'enable_categorical': False,
 }
 

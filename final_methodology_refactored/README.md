@@ -199,7 +199,6 @@ with profiling.StageProfiler("Data Loading", device_config):
 **Functions:**
 - `build_xgb_classifier()` - Build XGBoost classifier with device optimization
 - `run_xgb_random_search()` - Hyperparameter tuning with RandomizedSearchCV
-- `map_target_to_binary()` - Convert 3-class to binary target
 
 ### scripts/evaluation.py
 **Functions:**

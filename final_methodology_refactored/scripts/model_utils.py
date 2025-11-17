@@ -77,7 +77,7 @@ class ExpandingWindowSplitter:
         min_train_size: Minimum training size in hours
     """
 
-    def __init__(self, n_splits=5, step_size=24, min_train_size=336):
+    def __init__(self, n_splits=5, step_size=72, min_train_size=336):
         if n_splits < 1:
             raise ValueError("n_splits must be at least 1")
         if step_size < 1:
@@ -225,25 +225,6 @@ def enrich_with_model_predictions(
         enriched[name] = df_enriched
 
     return enriched
-
-
-def map_target_to_binary(y: pd.Series) -> np.ndarray:
-    """
-    Map target variable to binary (0/1) for XGBoost binary classification.
-
-    Args:
-        y: Target series with values in {-1, 0, 1}
-
-    Returns:
-        Binary array where positive class (1) is mapped to 1, others to 0
-    """
-    unique_values = set(np.unique(y))
-    unexpected_values = unique_values - {-1, 0, 1}
-    if unexpected_values:
-        raise ValueError(f"Unexpected target values encountered: {unexpected_values}")
-    return np.where(y > 0, 1, 0)
-
-
 def run_xgb_random_search(
     data_dict: dict,
     baseline_features: list,
@@ -495,9 +476,9 @@ def prepare_lgbm_datasets(
 
     Args:
         best_xgb_model: Fitted XGBoost model
-        best_dataset: Dictionary containing train_df, val_df, test_df, scaled_news_features
+        best_dataset: Dictionary containing train_df, val_df, test_df, and related metadata
         best_xgb_feature_columns: Feature columns used by XGBoost
-        baseline_features: List of baseline feature names
+        baseline_features: List of baseline feature names shared across models
         target_column: Name of target column
         prediction_prefix: Prefix for XGBoost prediction features
 
@@ -516,15 +497,31 @@ def prepare_lgbm_datasets(
         prediction_prefix=prediction_prefix
     )
 
-    # Define feature sets
-    xgb_feature_names = [
-        f"{prediction_prefix}_prob_class0",
-        f"{prediction_prefix}_prob_class1",
-        f"{prediction_prefix}_pred"
+    # Determine how many probability columns the XGBoost model produces
+    n_classes = getattr(best_xgb_model, "n_classes_", None)
+    if n_classes is None and hasattr(best_xgb_model, "classes_"):
+        n_classes = len(best_xgb_model.classes_)
+
+    if n_classes is None:
+        sample_df = enriched_datasets["train"]
+        proba_cols = [
+            col for col in sample_df.columns
+            if col.startswith(f"{prediction_prefix}_prob_class")
+        ]
+        n_classes = len(proba_cols)
+
+    if n_classes == 0:
+        raise ValueError("Unable to determine number of classes for XGBoost probabilities.")
+
+    prob_feature_names = [
+        f"{prediction_prefix}_prob_class{i}"
+        for i in range(n_classes)
     ]
 
-    scaled_news_features = best_dataset["scaled_news_features"]
-    signal_feature_columns = baseline_features + scaled_news_features + xgb_feature_names
+    # Define feature sets
+    xgb_feature_names = [f"{prediction_prefix}_pred", *prob_feature_names]
+
+    signal_feature_columns = baseline_features + xgb_feature_names
     baseline_feature_columns = baseline_features.copy()
 
     return {
@@ -985,15 +982,15 @@ def train_lightgbm_pair(
     """
     Train both LightGBM signal and baseline models.
 
-    This consolidates the training of signal (with news features) and baseline (price-only)
+    This consolidates the training of signal (baseline + XGBoost prediction features) and baseline (price-only)
     models, handling feature sanitization, CV setup, and grid search for both.
 
     Args:
-        signal_train_df: Training dataframe enriched with news features
-        signal_val_df: Validation dataframe enriched with news features
-        signal_test_df: Test dataframe enriched with news features
-        signal_feature_columns: Signal model feature columns (baseline + news + XGBoost predictions)
-        baseline_feature_columns: Baseline model feature columns (price/temporal only)
+        signal_train_df: Training dataframe enriched with XGBoost prediction features
+        signal_val_df: Validation dataframe enriched with XGBoost prediction features
+        signal_test_df: Test dataframe enriched with XGBoost prediction features
+        signal_feature_columns: Signal model feature columns (baseline + XGBoost predictions)
+        baseline_feature_columns: Baseline model feature columns (shared baseline set)
         y_train: Training labels (encoded)
         y_val: Validation labels (encoded)
         y_test: Test labels (encoded)
@@ -1029,7 +1026,7 @@ def train_lightgbm_pair(
     baseline_column_rename_map = dict(zip(baseline_feature_columns, baseline_feature_columns_sanitized))
 
     # --- Train Signal Model ---
-    print("Training SIGNAL model (baseline + news features + XGBoost predictions)...")
+    print("Training SIGNAL model (baseline features + XGBoost predictions)...")
     train_signal_X = signal_train_df[signal_feature_columns].fillna(0).rename(columns=signal_column_rename_map)
 
     # CV splitter for signal model

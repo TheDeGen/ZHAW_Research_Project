@@ -45,13 +45,13 @@ RANDOM_STATE = 42
 # CROSS-VALIDATION PARAMETERS
 # ============================================================================
 
-N_CV_SPLITS = 5
+N_CV_SPLITS = 8
 CV_MIN_TRAIN_SIZE = HOURS_PER_TWO_WEEKS  # Minimum 2 weeks for training
-CV_STEP_SIZE_HOURS = 24  # Step size between CV folds
+CV_STEP_SIZE_HOURS = 72  # Step size between CV folds
 
 # Expanding window parameters
-DEFAULT_EXPANDING_SPLITS = 4  # Lower number for quicker iteration
-DEFAULT_EXPANDING_STEP = 24
+DEFAULT_EXPANDING_SPLITS = 8  # Slightly higher for more stable validation
+DEFAULT_EXPANDING_STEP = 72
 DEFAULT_MIN_TRAIN_SIZE = 336  # Two weeks of hourly observations
 
 # ============================================================================
@@ -167,4 +167,4 @@ TIME_DECAY_LAMBDAS = [0.01, 0.05, 0.1, 0.25, 0.5]
 
 NEWS_DATA_PATH = "german_news_v1.csv"
 ENERGY_DATA_PATH = "energy_baseline.csv"
-MIN_TIMESTAMP = "2023-01-01"
+MIN_TIMESTAMP = "2024-11-01"
