@@ -259,10 +259,11 @@ with profiling.StageProfiler("Data Loading", device_config):
 - Rank by validation accuracy
 
 ### Stage 5: Model Training
-- XGBoost RandomizedSearchCV
+- XGBoost RandomizedSearchCV (softmax objective + inverse-frequency sample weights)
 - Expanding-window time-series CV
 - GPU acceleration when available
-- Hyperparameter distributions from config
+- Regularised hyperparameter distributions from config (100–400 estimators, explicit `min_child_weight`, `reg_alpha`, `reg_lambda`)
+- Native argmax probabilities downstream (no additional threshold tuning)
 
 ### Stage 6: Evaluation
 - Confusion matrices
