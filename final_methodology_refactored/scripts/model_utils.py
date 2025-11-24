@@ -153,7 +153,7 @@ def build_xgb_classifier(random_state: int = 42, device_config: dict | None = No
             'random_state': random_state
         }
     else:
-        objective = 'multi:softmax'
+        objective = 'multi:softprob'
         eval_metric = 'mlogloss'
         params = {
             'objective': objective,
@@ -281,6 +281,7 @@ def run_xgb_random_search(
         }
 
     train_df = data_dict['train_df']
+    val_df = data_dict.get('val_df')
     scaled_news_features = data_dict['scaled_news_features']
     feature_columns = baseline_features + scaled_news_features
     missing_features = [col for col in feature_columns if col not in train_df.columns]
@@ -295,6 +296,15 @@ def run_xgb_random_search(
     label_encoder = LabelEncoder()
     y_train = label_encoder.fit_transform(y_train_raw)
     num_classes = len(label_encoder.classes_)
+
+    # Prepare validation set for early stopping
+    if val_df is not None:
+        X_val = val_df[feature_columns].fillna(0)
+        y_val_raw = val_df[target_column].astype(int)
+        y_val = label_encoder.transform(y_val_raw)
+    else:
+        X_val = None
+        y_val = None
 
     print(f"Training XGBoost with {num_classes} classes: {label_encoder.classes_}")
 
@@ -312,6 +322,10 @@ def run_xgb_random_search(
         )
 
     classifier = build_xgb_classifier(random_state=random_state, device_config=device_config, num_classes=num_classes)
+
+    # Add early stopping if validation set is provided
+    if X_val is not None:
+        classifier.set_params(early_stopping_rounds=20)
 
     if device_config is None:
         search_n_jobs = -1
@@ -345,7 +359,15 @@ def run_xgb_random_search(
     class_weights = (len(y_train) / (num_classes * class_counts))
     sample_weights = class_weights[y_train]
 
-    search.fit(X_train, y_train, sample_weight=sample_weights)
+    # Prepare fit parameters for early stopping
+    fit_params = {'sample_weight': sample_weights}
+    if X_val is not None and y_val is not None:
+        val_sample_weights = class_weights[y_val]
+        fit_params['eval_set'] = [(X_val, y_val)]
+        fit_params['sample_weight_eval_set'] = [val_sample_weights]
+        fit_params['verbose'] = False
+
+    search.fit(X_train, y_train, **fit_params)
     return search, feature_columns, label_encoder
 
 
@@ -397,6 +419,8 @@ def build_lgbm_classifier(
 def run_lgbm_grid_search(
     X_train: pd.DataFrame,
     y_train: np.ndarray,
+    X_val: pd.DataFrame | None = None,
+    y_val: np.ndarray | None = None,
     param_grid: dict | None = None,
     cv: object | None = None,
     scoring: str = "f1_macro",
@@ -410,6 +434,8 @@ def run_lgbm_grid_search(
     Args:
         X_train: Training features.
         y_train: Training labels.
+        X_val: Optional validation features for early stopping.
+        y_val: Optional validation labels for early stopping.
         param_grid: Parameter grid for GridSearchCV.
         cv: Cross-validation splitter.
         scoring: Scoring metric.
@@ -424,8 +450,11 @@ def run_lgbm_grid_search(
     y_array = np.asarray(y_train)
     num_classes = int(np.unique(y_array).size)
 
-    # Compute class weights for balanced training
-    class_weights = compute_class_weights(y_array)
+    # Compute inverse-frequency sample weights (same as XGBoost)
+    class_counts = np.bincount(y_array, minlength=num_classes)
+    class_counts[class_counts == 0] = 1
+    class_weights = (len(y_array) / (num_classes * class_counts))
+    sample_weights = class_weights[y_array]
 
     estimator = build_lgbm_classifier(
         num_classes=num_classes,
@@ -458,7 +487,17 @@ def run_lgbm_grid_search(
         return_train_score=True,
     )
 
-    grid.fit(X_train, y_train)
+    # Prepare fit parameters with early stopping if validation data provided
+    fit_params = {'sample_weight': sample_weights}
+    if X_val is not None and y_val is not None:
+        from lightgbm import early_stopping, log_evaluation
+
+        val_sample_weights = class_weights[y_val]
+        fit_params['eval_set'] = [(X_val, y_val)]
+        fit_params['eval_sample_weight'] = [val_sample_weights]
+        fit_params['callbacks'] = [early_stopping(stopping_rounds=20, verbose=False), log_evaluation(0)]
+
+    grid.fit(X_train, y_train, **fit_params)
     return grid
 
 
@@ -879,6 +918,7 @@ def train_xgb_candidates(
 
         data_dict = {
             "train_df": dataset["train_df"],
+            "val_df": dataset["val_df"],  # Add validation set for early stopping
             "scaled_news_features": dataset["scaled_news_features"],
         }
 
@@ -948,6 +988,29 @@ def train_xgb_candidates(
     print(f"  Validation macro-F1: {best_run['val_macro_f1']:.3f}")
     print(f"  XGBoost classes: {best_label_encoder.classes_}")
 
+    # Calibrate best model using validation set (Platt scaling)
+    print(f"\n✓ Calibrating XGBoost probabilities using validation set...")
+    val_df = best_dataset["val_df"]
+    X_val = val_df[best_feature_columns].fillna(0)
+    y_val = best_label_encoder.transform(val_df[target_column].astype(int))
+
+    # Keep reference to uncalibrated model for learning curves, etc.
+    uncalibrated_best_model = best_model
+
+    calibrated_best_model = calibrate_classifier(
+        model=best_model,
+        X_train=None,  # Not needed for cv='prefit'
+        y_train=None,
+        X_val=X_val,
+        y_val=y_val,
+        method='sigmoid',
+        cv='prefit'
+    )
+
+    # Use calibrated model as default best_model
+    best_model = calibrated_best_model
+    print(f"  Calibration complete (Platt scaling)")
+
     return {
         "tuning_runs": tuning_runs,
         "best_models": best_models,
@@ -955,7 +1018,8 @@ def train_xgb_candidates(
         "label_encoders": label_encoders,
         "best_run": best_run,
         "best_params_key": best_params_key,
-        "best_model": best_model,
+        "best_model": best_model,  # Calibrated model (for LightGBM)
+        "best_model_uncalibrated": uncalibrated_best_model,  # Uncalibrated for learning curves
         "best_feature_columns": best_feature_columns,
         "best_label_encoder": best_label_encoder,
         "best_dataset": best_dataset,
@@ -1045,9 +1109,14 @@ def train_lightgbm_pair(
         min_train_size=cv_min_train_size,
     )
 
+    # Prepare validation data for early stopping
+    val_signal_X = signal_val_df[signal_feature_columns].fillna(0).rename(columns=signal_column_rename_map)
+
     signal_grid = run_lgbm_grid_search(
         X_train=train_signal_X,
         y_train=y_train,
+        X_val=val_signal_X,
+        y_val=y_val,
         param_grid=copy.deepcopy(param_grid),
         cv=signal_cv,
         device_config=device_config,
@@ -1078,9 +1147,14 @@ def train_lightgbm_pair(
         min_train_size=cv_min_train_size,
     )
 
+    # Prepare validation data for early stopping
+    val_baseline_X = signal_val_df[baseline_feature_columns].fillna(0).rename(columns=baseline_column_rename_map)
+
     baseline_grid = run_lgbm_grid_search(
         X_train=train_baseline_X,
         y_train=y_train,
+        X_val=val_baseline_X,
+        y_val=y_val,
         param_grid=copy.deepcopy(param_grid),
         cv=baseline_cv,
         device_config=device_config,

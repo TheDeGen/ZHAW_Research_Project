@@ -9,7 +9,7 @@ Contains model-specific hyperparameters and configurations.
 # ============================================================================
 
 XGBOOST_BASE_PARAMS = {
-    'objective': 'multi:softprob',
+    'objective': 'multi:softprob',  # Changed from softmax to softprob for calibrated probabilities
     'eval_metric': 'mlogloss',
     'num_class': 3,
     'enable_categorical': False,
@@ -37,7 +37,7 @@ LIGHTGBM_BASE_PARAMS = {
     'metric': 'multi_logloss',
     'boosting_type': 'gbdt',
     'verbose': -1,
-    'is_unbalance': True,  # Handle class imbalance
+    # Note: Class imbalance now handled via inverse-frequency sample weights (same as XGBoost)
 }
 
 # Grid search parameter ranges for LightGBM

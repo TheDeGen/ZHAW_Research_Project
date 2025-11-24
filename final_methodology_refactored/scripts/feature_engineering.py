@@ -625,8 +625,18 @@ def compute_time_decayed_topic_counts(
 
         weighted_counts_array = np.zeros((len(timestamps), len(topics)), dtype=np.float32)
 
-        # Process in batches to avoid GPU memory issues
-        batch_size = min(1000, len(timestamps))
+        # Process in batches to avoid GPU memory issues (adaptive batch sizing)
+        if torch.cuda.is_available():
+            gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            if gpu_memory_gb >= 16:
+                batch_size = min(10000, len(timestamps))
+            elif gpu_memory_gb >= 8:
+                batch_size = min(5000, len(timestamps))
+            else:
+                batch_size = min(2000, len(timestamps))
+        else:
+            batch_size = min(1000, len(timestamps))
+
         for batch_start in tqdm(range(0, len(timestamps), batch_size),
                                desc="Processing timestamp batches (GPU)",
                                disable=not verbose):
@@ -800,8 +810,18 @@ def compute_time_decayed_embeddings(
         lookback_delta = np.timedelta64(int(lookback_window), 'h')
         cutoff_times = timestamps - lookback_delta
 
-        # Process in batches to manage GPU memory
-        batch_size = min(500, len(timestamps))
+        # Process in batches to manage GPU memory (adaptive batch sizing for embeddings)
+        if torch.cuda.is_available():
+            gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            if gpu_memory_gb >= 16:
+                batch_size = min(5000, len(timestamps))
+            elif gpu_memory_gb >= 8:
+                batch_size = min(2000, len(timestamps))
+            else:
+                batch_size = min(1000, len(timestamps))
+        else:
+            batch_size = min(500, len(timestamps))
+
         for batch_start in tqdm(range(0, len(timestamps), batch_size),
                                desc="Processing timestamp batches (GPU)",
                                disable=not verbose):
@@ -903,6 +923,7 @@ def reduce_embeddings_gpu_first(
     import umap
 
     cache_root = Path('.cache/embeddings')
+    
     cache_root.mkdir(parents=True, exist_ok=True)
 
     checksum = hashlib.sha1(embeddings.tobytes()).hexdigest()
