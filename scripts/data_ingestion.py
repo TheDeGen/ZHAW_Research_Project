@@ -37,7 +37,7 @@ def run_ingestion_stage(
             - master_df: Master feature dataframe with target variable
     """
     # --- Load & normalize news feed ---
-    news_df = pd.read_csv(news_path)
+    news_df = pd.read_csv(news_path, on_bad_lines='skip')
     news_df['publishedAt'] = pd.to_datetime(news_df['publishedAt'])
     news_df['publishedAt'] = news_df['publishedAt'].dt.tz_localize(None)
     news_df = news_df.set_index('publishedAt').sort_index()
