@@ -1026,6 +1026,67 @@ def train_xgb_candidates(
     }
 
 
+def evaluate_xgb_test_set(
+    model,
+    test_df: pd.DataFrame,
+    feature_columns: list,
+    target_column: str,
+    label_encoder,
+    model_name: str = "XGBoost"
+) -> dict:
+    """
+    Evaluate XGBoost model on test set and return predictions and metrics.
+
+    Args:
+        model: Fitted XGBoost model (calibrated or uncalibrated)
+        test_df: Test dataframe
+        feature_columns: List of feature column names
+        target_column: Name of target column
+        label_encoder: Label encoder for target classes
+        model_name: Name for display purposes
+
+    Returns:
+        Dictionary containing:
+            - 'y_test': Encoded test labels
+            - 'y_pred': Predicted labels
+            - 'y_pred_proba': Prediction probabilities
+            - 'X_test': Test feature matrix
+            - 'accuracy': Test accuracy
+            - 'macro_f1': Test macro F1 score
+    """
+    from sklearn.metrics import accuracy_score, f1_score
+
+    X_test = test_df[feature_columns].fillna(0)
+    y_test_raw = test_df[target_column].astype(int)
+    y_test = label_encoder.transform(y_test_raw)
+
+    y_pred_proba = model.predict_proba(X_test)
+    y_pred = np.argmax(y_pred_proba, axis=1)
+
+    accuracy = accuracy_score(y_test, y_pred)
+    macro_f1 = f1_score(y_test, y_pred, average="macro", zero_division=0)
+
+    print(f"\n✓ {model_name} Test Evaluation (3-class)")
+    print(f"  Argmax predictions → Acc={accuracy:.4f}, Macro-F1={macro_f1:.4f}")
+
+    # Display detailed class-wise metrics
+    print_class_wise_metrics(
+        y_true=y_test,
+        y_pred=y_pred,
+        label_encoder=label_encoder,
+        dataset_name=f"{model_name} Test Set"
+    )
+
+    return {
+        "y_test": y_test,
+        "y_pred": y_pred,
+        "y_pred_proba": y_pred_proba,
+        "X_test": X_test,
+        "accuracy": accuracy,
+        "macro_f1": macro_f1,
+    }
+
+
 def train_lightgbm_pair(
     signal_train_df: pd.DataFrame,
     signal_val_df: pd.DataFrame,
