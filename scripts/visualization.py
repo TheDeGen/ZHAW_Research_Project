@@ -12,9 +12,106 @@ from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay, roc_curve,
 from sklearn.preprocessing import label_binarize
 from sklearn.inspection import PartialDependenceDisplay
 import warnings
+from pathlib import Path
+
+# Import visualization configuration
+try:
+    from config import pipeline_config as cfg
+    _HAS_CONFIG = True
+except ImportError:
+    _HAS_CONFIG = False
 
 
-def plot_confusion_matrices(models_dict, y_test, class_labels=None, label_encoder=None):
+# ============================================================================
+# HELPER FUNCTIONS FOR CONSISTENT STYLING
+# ============================================================================
+
+def _get_colors(n: int = None) -> list:
+    """
+    Return colorblind-safe color palette (ColorBrewer Dark2).
+
+    Args:
+        n: Number of colors needed. If None, returns full palette.
+
+    Returns:
+        List of hex color strings.
+    """
+    if _HAS_CONFIG:
+        colors = cfg.VIZ_COLOR_LIST
+    else:
+        colors = ["#1B9E77", "#D95F02", "#7570B3", "#E7298A",
+                  "#66A61E", "#E6AB02", "#A6761D", "#666666"]
+
+    if n is None:
+        return colors
+    return [colors[i % len(colors)] for i in range(n)]
+
+
+def _get_semantic_color(key: str) -> str:
+    """
+    Get semantic color for specific visualization elements.
+
+    Args:
+        key: One of 'long', 'neutral', 'short', 'train', 'validation', 'test'
+
+    Returns:
+        Hex color string.
+    """
+    if _HAS_CONFIG:
+        return cfg.VIZ_SEMANTIC_COLORS.get(key, cfg.VIZ_COLOR_LIST[0])
+
+    semantic_colors = {
+        "long": "#1B9E77", "neutral": "#666666", "short": "#D95F02",
+        "train": "#1B9E77", "validation": "#D95F02", "test": "#7570B3",
+    }
+    return semantic_colors.get(key, "#1B9E77")
+
+
+def _get_figsize() -> tuple:
+    """Get default figure size from config."""
+    if _HAS_CONFIG:
+        return cfg.DEFAULT_FIGSIZE
+    return (12, 8)
+
+
+def _get_cmap_sequential() -> str:
+    """Get sequential colormap from config."""
+    if _HAS_CONFIG:
+        return cfg.VIZ_CMAP_SEQUENTIAL
+    return "YlGnBu"
+
+
+def _save_figure(fig, filename: str, output_dir: str = None, dpi: int = None) -> str:
+    """
+    Save figure to disk.
+
+    Args:
+        fig: matplotlib figure object
+        filename: Name for the file (without extension)
+        output_dir: Output directory (defaults to cfg.FIGURES_OUTPUT_DIR)
+        dpi: Resolution (defaults to cfg.DEFAULT_DPI)
+
+    Returns:
+        Path to saved file.
+    """
+    if output_dir is None:
+        output_dir = cfg.FIGURES_OUTPUT_DIR if _HAS_CONFIG else "outputs/figures"
+    if dpi is None:
+        dpi = cfg.DEFAULT_DPI if _HAS_CONFIG else 150
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    filepath = Path(output_dir) / f"{filename}.png"
+    fig.savefig(filepath, dpi=dpi, bbox_inches='tight', facecolor='white')
+    print(f"Figure saved: {filepath}")
+    return str(filepath)
+
+
+# ============================================================================
+# PLOTTING FUNCTIONS
+# ============================================================================
+
+def plot_confusion_matrices(models_dict, y_test, class_labels=None, label_encoder=None,
+                            save_path: str = None, show: bool = True):
     """
     Plot confusion matrices for multiple models.
 
@@ -63,16 +160,23 @@ def plot_confusion_matrices(models_dict, y_test, class_labels=None, label_encode
 
         cm = confusion_matrix(y_true, y_pred, labels=class_labels)
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_labels)
-        disp.plot(ax=ax, values_format='d', cmap='Blues', colorbar=False)
-        ax.set_title(name)
-        ax.set_xlabel('Predicted label')
-        ax.set_ylabel('True label')
+        disp.plot(ax=ax, values_format='d', cmap=_get_cmap_sequential(), colorbar=False)
+        ax.set_title(name, fontweight='bold')
+        ax.set_xlabel('Predicted label', fontweight='bold')
+        ax.set_ylabel('True label', fontweight='bold')
 
     plt.tight_layout()
-    plt.show()
+
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
 
-def plot_feature_importance(model, feature_names, model_name, top_n=20):
+def plot_feature_importance(model, feature_names, model_name, top_n=20,
+                            save_path: str = None, show: bool = True):
     """
     Plot LightGBM/XGBoost feature importance (gain) for a fitted model.
 
@@ -81,6 +185,8 @@ def plot_feature_importance(model, feature_names, model_name, top_n=20):
         feature_names: List of feature names
         model_name: Name of the model for the plot title
         top_n: Number of top features to display
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
 
     Returns:
         DataFrame with feature importances sorted by importance
@@ -104,62 +210,35 @@ def plot_feature_importance(model, feature_names, model_name, top_n=20):
 
     top_df = importance_df.head(top_n)
 
-    plt.figure(figsize=(10, max(6, len(top_df) * 0.4)))
+    fig, ax = plt.subplots(figsize=_get_figsize())
+    colors = _get_colors(len(top_df))
     sns.barplot(
         data=top_df,
         x="importance",
         y="feature",
-        palette="Blues_r"
+        hue="feature",
+        palette=colors,
+        legend=False,
+        ax=ax
     )
-    plt.title(f"{model_name} – Top {len(top_df)} Features (Gain)")
-    plt.xlabel("Importance (Gain)")
-    plt.ylabel("")
+    ax.set_title(f"{model_name} – Top {len(top_df)} Features (Gain)", fontweight='bold', fontsize=14)
+    ax.set_xlabel("Importance (Gain)", fontweight='bold', fontsize=12)
+    ax.set_ylabel("")
+    ax.grid(alpha=0.3, axis='x')
     plt.tight_layout()
-    plt.show()
+
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
     return importance_df
 
 
-def plot_cumulative_returns(
-    returns_map: dict[str, pd.Series],
-    title: str = "Cumulative Strategy Returns",
-    xlabel: str | None = None,
-    ylabel: str = "Cumulative Return"
-) -> None:
-    """
-    Plot cumulative returns for multiple strategies on a shared axis.
-
-    Args:
-        returns_map: Mapping of strategy label to return series.
-        title: Plot title.
-        xlabel: Optional x-axis label (auto-derived for datetime index).
-        ylabel: y-axis label.
-    """
-    plt.figure(figsize=(12, 6))
-    for name, returns in returns_map.items():
-        cumulative = returns.cumsum()
-        index = cumulative.index
-        if isinstance(index, pd.DatetimeIndex):
-            if index.tz is not None:
-                index = index.tz_convert(None)
-            x_values = index.to_pydatetime()
-        else:
-            x_values = np.arange(len(cumulative))
-        plt.plot(x_values, cumulative.values, label=name, linewidth=2)
-
-    plt.title(title)
-    plt.ylabel(ylabel)
-    if xlabel:
-        plt.xlabel(xlabel)
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    if isinstance(cumulative.index, pd.DatetimeIndex):
-        plt.gcf().autofmt_xdate()
-    plt.show()
-
-
-def plot_roc_curves(models_dict, y_test, label_encoder=None, multiclass_average='macro'):
+def plot_roc_curves(models_dict, y_test, label_encoder=None, multiclass_average='macro',
+                    save_path: str = None, show: bool = True):
     """
     Plot ROC curves for multiple models.
 
@@ -172,6 +251,8 @@ def plot_roc_curves(models_dict, y_test, label_encoder=None, multiclass_average=
             If provided, used to handle multiclass encoding.
         multiclass_average: str
             Strategy for multiclass ROC ('macro', 'micro', or None for one-vs-rest)
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
 
     Returns:
         Dictionary with AUC scores per model
@@ -180,17 +261,19 @@ def plot_roc_curves(models_dict, y_test, label_encoder=None, multiclass_average=
     classes = np.unique(y_true)
     n_classes = len(classes)
 
-    plt.figure(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=_get_figsize())
     auc_scores = {}
+    colors = _get_colors(len(models_dict))
 
-    for name, (model, X_test) in models_dict.items():
+    for idx, (name, (model, X_test)) in enumerate(models_dict.items()):
         y_proba = model.predict_proba(X_test)
 
         if n_classes == 2:
             # Binary classification
             fpr, tpr, _ = roc_curve(y_true, y_proba[:, 1], pos_label=classes[1])
             roc_auc = auc(fpr, tpr)
-            plt.plot(fpr, tpr, linewidth=2, label=f'{name} (AUC = {roc_auc:.3f})')
+            ax.plot(fpr, tpr, linewidth=2, color=colors[idx],
+                    label=f'{name} (AUC = {roc_auc:.3f})')
             auc_scores[name] = roc_auc
         else:
             # Multiclass - compute macro-average ROC
@@ -215,27 +298,38 @@ def plot_roc_curves(models_dict, y_test, label_encoder=None, multiclass_average=
             mean_tpr /= n_classes
             macro_auc = auc(all_fpr, mean_tpr)
 
-            plt.plot(all_fpr, mean_tpr, linewidth=2,
+            ax.plot(all_fpr, mean_tpr, linewidth=2, color=colors[idx],
                     label=f'{name} (Macro AUC = {macro_auc:.3f})')
             auc_scores[name] = macro_auc
 
     # Plot diagonal
-    plt.plot([0, 1], [0, 1], 'k--', linewidth=1, label='Random Classifier')
+    ax.plot([0, 1], [0, 1], 'k--', linewidth=1, label='Random Classifier')
 
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate', fontsize=12)
-    plt.ylabel('True Positive Rate', fontsize=12)
-    plt.title('Receiver Operating Characteristic (ROC) Curves', fontsize=14)
-    plt.legend(loc="lower right")
-    plt.grid(alpha=0.3)
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel('False Positive Rate', fontweight='bold', fontsize=12)
+    ax.set_ylabel('True Positive Rate', fontweight='bold', fontsize=12)
+    ax.set_title('Receiver Operating Characteristic (ROC) Curves', fontweight='bold', fontsize=14)
+    ax.legend(loc="lower right")
+    ax.grid(alpha=0.3)
     plt.tight_layout()
-    plt.show()
+
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
     return auc_scores
 
 
-def plot_drawdown_chart(returns_map, title="Strategy Drawdown Analysis"):
+def plot_drawdown_chart(
+    returns_map,
+    title="Strategy Drawdown Analysis",
+    normalizer=None,
+    return_mode='percentage',
+):
     """
     Plot drawdown charts for multiple strategies.
 
@@ -244,17 +338,31 @@ def plot_drawdown_chart(returns_map, title="Strategy Drawdown Analysis"):
             Mapping of strategy name to return series.
         title: str
             Plot title.
+        normalizer: float | None
+            Mean absolute spread for percentage conversion.
+        return_mode: str
+            'absolute' or 'percentage'.
+
+    Raises:
+        ValueError: If return_mode='percentage' but normalizer is not provided.
     """
+    if return_mode == 'percentage' and normalizer is None:
+        raise ValueError("normalizer required for percentage mode")
+
+    scale = (100.0 / normalizer) if return_mode == 'percentage' and normalizer else 1.0
+    unit = "%" if return_mode == 'percentage' else "EUR/MWh"
+
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 10), sharex=True)
 
     for name, returns in returns_map.items():
-        cumulative = returns.cumsum()
+        cumulative = returns.cumsum() * scale
         running_max = cumulative.cummax()
         drawdown = cumulative - running_max
+        # Percentage drawdown relative to running max
         drawdown_pct = (drawdown / running_max.replace(0, np.nan)) * 100
 
         # Handle datetime index
-        index = cumulative.index
+        index = returns.index
         if isinstance(index, pd.DatetimeIndex):
             if index.tz is not None:
                 index = index.tz_convert(None)
@@ -262,26 +370,26 @@ def plot_drawdown_chart(returns_map, title="Strategy Drawdown Analysis"):
         else:
             x_values = np.arange(len(cumulative))
 
-        # Cumulative returns
+        # Cumulative returns (in % or EUR/MWh)
         ax1.plot(x_values, cumulative.values, label=name, linewidth=2)
 
-        # Drawdown
-        ax2.fill_between(x_values, 0, drawdown.values, alpha=0.3, label=name)
-        ax2.plot(x_values, drawdown.values, linewidth=1.5)
+        # Drawdown (in % of peak)
+        ax2.fill_between(x_values, 0, drawdown_pct.values, alpha=0.3, label=name)
+        ax2.plot(x_values, drawdown_pct.values, linewidth=1.5)
 
     ax1.set_title(f'{title} - Cumulative Returns', fontsize=14)
-    ax1.set_ylabel('Cumulative Return', fontsize=12)
+    ax1.set_ylabel(f'Cumulative Return ({unit})', fontsize=12)
     ax1.legend(loc='best')
     ax1.grid(alpha=0.3)
 
-    ax2.set_title('Drawdown', fontsize=14)
+    ax2.set_title('Drawdown (% of Peak)', fontsize=14)
     ax2.set_xlabel('Time', fontsize=12)
-    ax2.set_ylabel('Drawdown', fontsize=12)
+    ax2.set_ylabel('Drawdown (%)', fontsize=12)
     ax2.legend(loc='best')
     ax2.grid(alpha=0.3)
 
     plt.tight_layout()
-    if isinstance(cumulative.index, pd.DatetimeIndex):
+    if isinstance(returns.index, pd.DatetimeIndex):
         plt.gcf().autofmt_xdate()
     plt.show()
 
@@ -475,7 +583,8 @@ def plot_density_plots(df, features, ncols=3, figsize_per_plot=(5, 4), hue=None)
     plt.show()
 
 
-def plot_class_distribution(y, title="Target Class Distribution", label_encoder=None):
+def plot_class_distribution(y, title="Target Class Distribution", label_encoder=None,
+                            save_path: str = None, show: bool = True):
     """
     Plot distribution of target classes.
 
@@ -483,6 +592,8 @@ def plot_class_distribution(y, title="Target Class Distribution", label_encoder=
         y: Target variable (array or Series)
         title: Plot title
         label_encoder: Optional LabelEncoder to decode class labels
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
     """
     y_arr = np.asarray(y)
 
@@ -494,16 +605,16 @@ def plot_class_distribution(y, title="Target Class Distribution", label_encoder=
 
     percentages = counts / counts.sum() * 100
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=_get_figsize())
 
     # Bar plot
-    colors = sns.color_palette("Set2", len(unique))
+    colors = _get_colors(len(unique))
     ax1.bar(range(len(unique)), counts, color=colors, edgecolor='black')
     ax1.set_xticks(range(len(unique)))
     ax1.set_xticklabels(unique)
-    ax1.set_xlabel('Class', fontsize=12)
-    ax1.set_ylabel('Count', fontsize=12)
-    ax1.set_title(f'{title} - Counts', fontsize=14)
+    ax1.set_xlabel('Class', fontweight='bold', fontsize=12)
+    ax1.set_ylabel('Count', fontweight='bold', fontsize=12)
+    ax1.set_title(f'{title} - Counts', fontweight='bold', fontsize=14)
     ax1.grid(axis='y', alpha=0.3)
 
     # Add count labels on bars
@@ -514,10 +625,16 @@ def plot_class_distribution(y, title="Target Class Distribution", label_encoder=
     # Pie chart
     ax2.pie(counts, labels=unique, autopct='%1.1f%%', colors=colors,
            startangle=90, textprops={'fontsize': 11})
-    ax2.set_title(f'{title} - Proportions', fontsize=14)
+    ax2.set_title(f'{title} - Proportions', fontweight='bold', fontsize=14)
 
     plt.tight_layout()
-    plt.show()
+
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
     return dict(zip(unique, zip(counts, percentages)))
 
@@ -525,10 +642,13 @@ def plot_class_distribution(y, title="Target Class Distribution", label_encoder=
 def plot_cumulative_returns(
     returns_map,
     title="Cumulative Returns Comparison",
-    ylabel="Cumulative Return",
-    figsize=(14, 8),
-    dpi=100,
+    ylabel=None,
+    figsize=None,
+    dpi=None,
     show=True,
+    normalizer=None,
+    return_mode='percentage',
+    save_path: str = None,
 ):
     """
     Plot cumulative returns for multiple strategies.
@@ -539,30 +659,51 @@ def plot_cumulative_returns(
         title: str
             Plot title.
         ylabel: str
-            Y-axis label.
+            Y-axis label (auto-generated if None based on return_mode).
         figsize: tuple
-            Figure size in inches.
+            Figure size in inches. Defaults to config value.
         dpi: int
-            Figure resolution.
+            Figure resolution. Defaults to config value.
         show: bool
             Whether to call plt.show() at the end.
+        normalizer: float | None
+            Mean absolute spread for percentage conversion.
+        return_mode: str
+            'absolute' or 'percentage'.
+        save_path: Optional filename to save (without extension)
 
     Returns:
         Tuple of (fig, ax)
+
+    Raises:
+        ValueError: If return_mode='percentage' but normalizer is not provided.
     """
+    if return_mode == 'percentage' and normalizer is None:
+        raise ValueError("normalizer required for percentage mode")
+
+    if figsize is None:
+        figsize = _get_figsize()
+    if dpi is None:
+        dpi = cfg.DEFAULT_DPI if _HAS_CONFIG else 150
+
+    scale = (100.0 / normalizer) if return_mode == 'percentage' and normalizer else 1.0
+
+    if ylabel is None:
+        ylabel = "Cumulative Return (%)" if return_mode == 'percentage' else "Cumulative Return (EUR/MWh)"
+
     fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
 
-    colors = ['steelblue', 'coral', 'green', 'purple', 'orange']
+    colors = _get_colors(len(returns_map))
     linestyles = ['-', '--', '-.', ':']
 
     for idx, (name, returns) in enumerate(returns_map.items()):
-        cumulative = returns.cumsum()
+        cumulative = returns.cumsum() * scale
         color = colors[idx % len(colors)]
         linestyle = linestyles[idx % len(linestyles)]
         ax.plot(cumulative, label=name, color=color, linestyle=linestyle, linewidth=2, alpha=0.8)
 
-    ax.set_xlabel("Time Period")
-    ax.set_ylabel(ylabel)
+    ax.set_xlabel("Time Period", fontweight='bold', fontsize=12)
+    ax.set_ylabel(ylabel, fontweight='bold', fontsize=12)
     ax.set_title(title, fontweight="bold", fontsize=14)
     ax.axhline(0, color='black', linestyle='-', linewidth=0.8, alpha=0.5)
     ax.legend(loc='best', framealpha=0.9)
@@ -570,8 +711,12 @@ def plot_cumulative_returns(
 
     plt.tight_layout()
 
+    if save_path:
+        _save_figure(fig, save_path)
     if show:
         plt.show()
+    else:
+        plt.close(fig)
 
     return fig, ax
 
@@ -662,13 +807,16 @@ def plot_nlp_feature_importance(
     return fig, (ax1, ax2)
 
 
-def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
+def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame,
+                       save_path: str = None, show: bool = True):
     """
     Generate comprehensive EDA dashboard with multiple panels.
 
     Args:
         master_df: Master dataframe with energy and target data
         news_df: News dataframe with classification data
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
     """
     fig = plt.figure(figsize=(20, 12))
     gs = fig.add_gridspec(3, 3, hspace=0.3, wspace=0.3)
@@ -678,7 +826,7 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
     target_col = 'spread_target_shift_24'
     if target_col in master_df.columns:
         target_counts = master_df[target_col].value_counts().sort_index()
-        colors = ['red', 'gray', 'green']
+        colors = [_get_semantic_color('short'), _get_semantic_color('neutral'), _get_semantic_color('long')]
         ax1.bar(target_counts.index, target_counts.values, color=colors, alpha=0.7, edgecolor='black')
         ax1.set_xlabel('Target Class', fontweight='bold')
         ax1.set_ylabel('Count', fontweight='bold')
@@ -709,7 +857,7 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
     ax3 = fig.add_subplot(gs[1, 0])
     if 'classification' in news_df.columns and len(news_df) > 0:
         class_counts = news_df['classification'].value_counts().head(8)
-        ax3.barh(range(len(class_counts)), class_counts.values, color='steelblue', alpha=0.7)
+        ax3.barh(range(len(class_counts)), class_counts.values, color=_get_colors(1)[0], alpha=0.7)
         ax3.set_yticks(range(len(class_counts)))
         ax3.set_yticklabels([label[:40] + '...' if len(label) > 40 else label
                              for label in class_counts.index], fontsize=9)
@@ -744,12 +892,12 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
     if 'Load' in master_df.columns:
         load_series = master_df['Load'].dropna()
         if len(load_series) > 0:
-            ax5.hist(load_series, bins=50, color='orange', alpha=0.7, edgecolor='black')
+            ax5.hist(load_series, bins=50, color=_get_colors(2)[1], alpha=0.7, edgecolor='black')
             ax5.set_xlabel('Load (MW)', fontweight='bold')
             ax5.set_ylabel('Frequency', fontweight='bold')
             ax5.set_title('Load Distribution', fontweight='bold', fontsize=12)
             ax5.grid(alpha=0.3, axis='y')
-            ax5.axvline(load_series.mean(), color='red', linestyle='--', linewidth=2, label='Mean')
+            ax5.axvline(load_series.mean(), color=_get_semantic_color('short'), linestyle='--', linewidth=2, label='Mean')
             ax5.legend()
         else:
             ax5.text(0.5, 0.5, 'No Load data\navailable', ha='center', va='center', fontsize=10)
@@ -782,7 +930,7 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
     if 'day_of_week' in master_df.columns and 'real_spread_abs' in master_df.columns:
         dow_spread = master_df.groupby('day_of_week')['real_spread_abs'].mean()
         days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-        ax7.bar(range(7), dow_spread.values, color='teal', alpha=0.7, edgecolor='black')
+        ax7.bar(range(7), dow_spread.values, color=_get_colors(1)[0], alpha=0.7, edgecolor='black')
         ax7.set_xticks(range(7))
         ax7.set_xticklabels(days)
         ax7.set_ylabel('Average Spread (EUR/MWh)', fontweight='bold')
@@ -801,7 +949,7 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
     ax8 = fig.add_subplot(gs[2, 2])
     if hasattr(news_df.index, 'to_period') and len(news_df) > 0:
         news_daily = news_df.groupby(news_df.index.to_period('D')).size()
-        ax8.plot(news_daily.index.to_timestamp(), news_daily.values, linewidth=1.5, color='purple')
+        ax8.plot(news_daily.index.to_timestamp(), news_daily.values, linewidth=1.5, color=_get_colors(3)[2])
         ax8.set_xlabel('Date', fontweight='bold')
         ax8.set_ylabel('Number of Articles', fontweight='bold')
         ax8.set_title('News Volume Over Time', fontweight='bold', fontsize=12)
@@ -812,17 +960,25 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame):
         ax8.set_title('News Volume Over Time', fontweight='bold', fontsize=12)
 
     fig.suptitle('Exploratory Data Analysis Dashboard', fontsize=16, fontweight='bold', y=0.995)
-    plt.show()
+
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
 
-def plot_embedding_quality(news_df: pd.DataFrame, n_samples: int = 500, perplexity: int = 30):
+def plot_embedding_quality(news_df: pd.DataFrame, n_samples: int = 500,
+                           save_path: str = None, show: bool = True):
     """
-    Visualize embedding quality using UMAP/t-SNE dimensionality reduction.
+    Visualize embedding quality using UMAP dimensionality reduction.
 
     Args:
         news_df: News dataframe with 'embedding' and 'classification' columns
         n_samples: Number of samples to visualize (for performance)
-        perplexity: t-SNE perplexity parameter
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
     """
     if 'embedding' not in news_df.columns:
         print("No embeddings found in news_df. Skipping visualization.")
@@ -838,66 +994,44 @@ def plot_embedding_quality(news_df: pd.DataFrame, n_samples: int = 500, perplexi
     embeddings = np.vstack(news_sample['embedding'].values)
     labels = news_sample['classification'].values if 'classification' in news_sample.columns else None
 
-    fig, axes = plt.subplots(1, 2, figsize=(18, 7))
+    fig, ax = plt.subplots(figsize=_get_figsize())
 
     # UMAP visualization
     try:
         import umap
-        # Note: random_state removed to enable n_jobs parallelism
         reducer_umap = umap.UMAP(n_components=2, n_neighbors=15, min_dist=0.1, n_jobs=-1)
-        embedding_2d_umap = reducer_umap.fit_transform(embeddings)
+        embedding_2d = reducer_umap.fit_transform(embeddings)
 
         if labels is not None:
             unique_labels = pd.Series(labels).value_counts().head(10).index
-            colors = plt.cm.tab10(np.linspace(0, 1, len(unique_labels)))
+            colors = _get_colors(len(unique_labels))
 
             for i, label in enumerate(unique_labels):
                 mask = labels == label
-                axes[0].scatter(embedding_2d_umap[mask, 0], embedding_2d_umap[mask, 1],
-                              c=[colors[i]], label=label[:30], alpha=0.3, s=100)
-            axes[0].legend(loc='best', fontsize=8, ncol=2)
+                ax.scatter(embedding_2d[mask, 0], embedding_2d[mask, 1],
+                          c=colors[i], label=label[:30], alpha=0.5, s=80)
+            ax.legend(loc='best', fontsize=8, ncol=2)
         else:
-            axes[0].scatter(embedding_2d_umap[:, 0], embedding_2d_umap[:, 1],
-                          c='steelblue', alpha=0.3, s=100)
+            ax.scatter(embedding_2d[:, 0], embedding_2d[:, 1],
+                      c=_get_colors(1)[0], alpha=0.5, s=80)
 
-        axes[0].set_xlabel('UMAP Dimension 1', fontweight='bold')
-        axes[0].set_ylabel('UMAP Dimension 2', fontweight='bold')
-        axes[0].set_title('Embedding Visualization (UMAP)', fontweight='bold', fontsize=14)
-        axes[0].grid(alpha=0.3)
+        ax.set_xlabel('UMAP Dimension 1', fontweight='bold', fontsize=12)
+        ax.set_ylabel('UMAP Dimension 2', fontweight='bold', fontsize=12)
+        ax.set_title('News Embedding Visualization (UMAP)', fontweight='bold', fontsize=14)
+        ax.grid(alpha=0.3)
     except ImportError:
-        axes[0].text(0.5, 0.5, 'UMAP not installed\npip install umap-learn',
-                    ha='center', va='center', fontsize=12)
-        axes[0].set_title('UMAP (Not Available)', fontweight='bold')
-
-    # t-SNE visualization
-    try:
-        from sklearn.manifold import TSNE
-        tsne = TSNE(n_components=2, random_state=42, perplexity=min(perplexity, len(embeddings)-1))
-        embedding_2d_tsne = tsne.fit_transform(embeddings)
-
-        if labels is not None:
-            unique_labels = pd.Series(labels).value_counts().head(10).index
-            colors = plt.cm.tab10(np.linspace(0, 1, len(unique_labels)))
-
-            for i, label in enumerate(unique_labels):
-                mask = labels == label
-                axes[1].scatter(embedding_2d_tsne[mask, 0], embedding_2d_tsne[mask, 1],
-                              c=[colors[i]], label=label[:30], alpha=0.3, s=100)
-            axes[1].legend(loc='best', fontsize=8, ncol=2)
-        else:
-            axes[1].scatter(embedding_2d_tsne[:, 0], embedding_2d_tsne[:, 1],
-                          c='coral', alpha=0.3, s=100)
-
-        axes[1].set_xlabel('t-SNE Dimension 1', fontweight='bold')
-        axes[1].set_ylabel('t-SNE Dimension 2', fontweight='bold')
-        axes[1].set_title('Embedding Visualization (t-SNE)', fontweight='bold', fontsize=14)
-        axes[1].grid(alpha=0.3)
-    except Exception as e:
-        axes[1].text(0.5, 0.5, f't-SNE failed:\n{str(e)}', ha='center', va='center', fontsize=10)
-        axes[1].set_title('t-SNE (Failed)', fontweight='bold')
+        ax.text(0.5, 0.5, 'UMAP not installed\npip install umap-learn',
+                ha='center', va='center', fontsize=12)
+        ax.set_title('UMAP (Not Available)', fontweight='bold')
 
     plt.tight_layout()
-    plt.show()
+
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
 
 def plot_learning_curves(
@@ -907,7 +1041,9 @@ def plot_learning_curves(
     cv_splitter,
     scoring: str = 'f1_macro',
     model_name: str = 'Model',
-    train_sizes: np.ndarray = None
+    train_sizes: np.ndarray = None,
+    save_path: str = None,
+    show: bool = True
 ):
     """
     Plot learning curves to diagnose overfitting/underfitting.
@@ -920,6 +1056,8 @@ def plot_learning_curves(
         scoring: Scoring metric
         model_name: Name for the plot title
         train_sizes: Array of training sizes to evaluate
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
     """
     from sklearn.model_selection import learning_curve
 
@@ -946,18 +1084,21 @@ def plot_learning_curves(
         val_mean = np.mean(val_scores, axis=1)
         val_std = np.std(val_scores, axis=1)
 
-        fig, ax = plt.subplots(figsize=(12, 7))
+        fig, ax = plt.subplots(figsize=_get_figsize())
+
+        train_color = _get_semantic_color('train')
+        val_color = _get_semantic_color('validation')
 
         # Plot training and validation scores
-        ax.plot(train_sizes_abs, train_mean, 'o-', color='blue', linewidth=2,
+        ax.plot(train_sizes_abs, train_mean, 'o-', color=train_color, linewidth=2,
                markersize=6, label='Training score')
         ax.fill_between(train_sizes_abs, train_mean - train_std, train_mean + train_std,
-                        alpha=0.15, color='blue')
+                        alpha=0.15, color=train_color)
 
-        ax.plot(train_sizes_abs, val_mean, 'o-', color='red', linewidth=2,
+        ax.plot(train_sizes_abs, val_mean, 'o-', color=val_color, linewidth=2,
                markersize=6, label='Validation score')
         ax.fill_between(train_sizes_abs, val_mean - val_std, val_mean + val_std,
-                        alpha=0.15, color='red')
+                        alpha=0.15, color=val_color)
 
         # Add gap visualization
         gap = train_mean - val_mean
@@ -979,7 +1120,13 @@ def plot_learning_curves(
                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
         plt.tight_layout()
-        plt.show()
+
+        if save_path:
+            _save_figure(fig, save_path)
+        if show:
+            plt.show()
+        else:
+            plt.close(fig)
 
         print(f"✓ Learning curves complete")
         print(f"  Final training score: {final_train:.4f}")
@@ -1130,7 +1277,11 @@ def plot_transaction_cost_sensitivity(
     strategy_actions: dict[str, np.ndarray],
     spread_series: pd.Series,
     cost_range: list[float] = None,
-    pct_cost_scenarios: dict[str, tuple[float, float]] = None
+    pct_cost_scenarios: dict[str, tuple[float, float]] = None,
+    normalizer: float = None,
+    return_mode: str = 'percentage',
+    save_path: str = None,
+    show: bool = True,
 ) -> None:
     """
     Plot transaction cost sensitivity analysis for trading strategies.
@@ -1146,8 +1297,19 @@ def plot_transaction_cost_sensitivity(
         cost_range: List of fixed costs to test (EUR/MWh). Default: [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
         pct_cost_scenarios: Dict of scenario names to (fixed_cost, pct_cost) tuples.
             Default scenarios: No Costs, Low Cost, Medium Cost, High Cost
+        normalizer: Mean absolute spread for percentage conversion.
+        return_mode: 'absolute' or 'percentage'.
+
+    Raises:
+        ValueError: If return_mode='percentage' but normalizer is not provided.
     """
     from . import evaluation
+
+    if return_mode == 'percentage' and normalizer is None:
+        raise ValueError("normalizer required for percentage mode")
+
+    scale = (100.0 / normalizer) if return_mode == 'percentage' and normalizer else 1.0
+    unit = "%" if return_mode == 'percentage' else "EUR/MWh"
 
     # Default cost ranges
     if cost_range is None:
@@ -1177,8 +1339,15 @@ def plot_transaction_cost_sensitivity(
             transaction_cost_pct=pct_cost
         )
 
-        returns_summary_cost = evaluation.summarise_strategy_set(strategy_returns_cost)
-        print(f"\n{returns_summary_cost[['Total Return', 'Sharpe (annualised)', 'Sortino (annualised)']].to_string()}")
+        returns_summary_cost = evaluation.summarise_strategy_set(
+            strategy_returns_cost,
+            normalizer=normalizer,
+            return_mode=return_mode
+        )
+        # Get the appropriate column name based on mode
+        total_return_col = f"Total Return ({unit})"
+        cols_to_show = [total_return_col, 'Sharpe (annualised)', 'Sortino (annualised)']
+        print(f"\n{returns_summary_cost[cols_to_show].to_string()}")
 
     # Visualize impact
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
@@ -1198,15 +1367,20 @@ def plot_transaction_cost_sensitivity(
             transaction_cost=cost,
             transaction_cost_pct=0.0
         )
-        temp_summary = evaluation.summarise_strategy_set(temp_returns)
+        temp_summary = evaluation.summarise_strategy_set(
+            temp_returns,
+            normalizer=normalizer,
+            return_mode=return_mode
+        )
 
         for name in strategy_names:
-            strategy_returns_by_cost[name].append(temp_returns[name].sum())
+            # Scale the raw sum for plotting
+            strategy_returns_by_cost[name].append(temp_returns[name].sum() * scale)
             strategy_sharpes_by_cost[name].append(temp_summary.loc[name, "Sharpe (annualised)"])
 
     # Plot 1: Total return vs cost
-    colors = ['steelblue', 'coral', 'green']
-    markers = ['o', 's', '^']
+    colors = _get_colors(len(strategy_names))
+    markers = ['o', 's', '^', 'D', 'v', 'p', 'h', '*']
 
     for idx, name in enumerate(strategy_names):
         ax1.plot(cost_range, strategy_returns_by_cost[name],
@@ -1215,7 +1389,7 @@ def plot_transaction_cost_sensitivity(
 
     ax1.axhline(0, color='black', linestyle='--', linewidth=1, alpha=0.5)
     ax1.set_xlabel('Fixed Transaction Cost (EUR/MWh)', fontweight='bold', fontsize=12)
-    ax1.set_ylabel('Total Return (EUR/MWh)', fontweight='bold', fontsize=12)
+    ax1.set_ylabel(f'Total Return ({unit})', fontweight='bold', fontsize=12)
     ax1.set_title('Total Return vs Transaction Cost', fontweight='bold', fontsize=14)
     ax1.legend(loc='best')
     ax1.grid(alpha=0.3)
@@ -1234,6 +1408,218 @@ def plot_transaction_cost_sensitivity(
     ax2.grid(alpha=0.3)
 
     plt.tight_layout()
-    plt.show()
+
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
 
     print("\n" + "=" * 80)
+
+
+# ============================================================================
+# INDIVIDUAL PUBLICATION-READY PLOTS
+# ============================================================================
+
+def plot_top_news_classifications(news_df: pd.DataFrame, top_n: int = 8,
+                                   save_path: str = None, show: bool = True):
+    """
+    Plot top N news topic classifications as horizontal bar chart.
+
+    Args:
+        news_df: News dataframe with 'classification' column
+        top_n: Number of top classifications to show
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
+
+    Returns:
+        DataFrame with classification counts
+    """
+    if 'classification' not in news_df.columns or len(news_df) == 0:
+        print("No classification data available.")
+        return None
+
+    fig, ax = plt.subplots(figsize=_get_figsize())
+
+    class_counts = news_df['classification'].value_counts().head(top_n)
+    colors = _get_colors(len(class_counts))
+
+    y_pos = range(len(class_counts))
+    ax.barh(y_pos, class_counts.values, color=colors, alpha=0.8, edgecolor='black')
+
+    labels = [label[:50] + '...' if len(label) > 50 else label for label in class_counts.index]
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(labels, fontsize=10)
+    ax.invert_yaxis()
+
+    ax.set_xlabel('Number of Articles', fontweight='bold', fontsize=12)
+    ax.set_title(f'Top {top_n} News Topic Classifications', fontweight='bold', fontsize=14)
+    ax.grid(alpha=0.3, axis='x')
+
+    for i, (count, pct) in enumerate(zip(class_counts.values,
+                                          class_counts.values / class_counts.sum() * 100)):
+        ax.text(count + 0.5, i, f'{count} ({pct:.1f}%)', va='center', fontsize=9)
+
+    plt.tight_layout()
+
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return class_counts.to_frame('count')
+
+
+def plot_target_distribution(master_df: pd.DataFrame, target_column: str = 'spread_target_shift_24',
+                              save_path: str = None, show: bool = True):
+    """
+    Plot target class distribution (Long/Neutral/Short).
+
+    Args:
+        master_df: Master dataframe with target column
+        target_column: Name of target column
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
+
+    Returns:
+        DataFrame with class distribution
+    """
+    if target_column not in master_df.columns:
+        print(f"Target column '{target_column}' not found.")
+        return None
+
+    fig, ax = plt.subplots(figsize=_get_figsize())
+
+    target_counts = master_df[target_column].value_counts().sort_index()
+    colors = [_get_semantic_color('short'), _get_semantic_color('neutral'), _get_semantic_color('long')]
+    labels = ['Short (-1)', 'Neutral (0)', 'Long (+1)']
+
+    bars = ax.bar(labels, target_counts.values, color=colors, alpha=0.8, edgecolor='black')
+
+    ax.set_xlabel('Target Class', fontweight='bold', fontsize=12)
+    ax.set_ylabel('Count', fontweight='bold', fontsize=12)
+    ax.set_title('Target Distribution (24h Spread Direction)', fontweight='bold', fontsize=14)
+    ax.grid(alpha=0.3, axis='y')
+
+    total = target_counts.sum()
+    for bar, count in zip(bars, target_counts.values):
+        pct = count / total * 100
+        ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 20,
+                f'{count}\n({pct:.1f}%)', ha='center', va='bottom', fontsize=11)
+
+    plt.tight_layout()
+
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return target_counts.to_frame('count')
+
+
+def plot_top_news_sources(news_df: pd.DataFrame, top_n: int = 8,
+                           save_path: str = None, show: bool = True):
+    """
+    Plot top N news sources (publishers) as horizontal bar chart.
+
+    Args:
+        news_df: News dataframe with 'source' column
+        top_n: Number of top sources to show
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
+
+    Returns:
+        DataFrame with source counts
+    """
+    source_col = None
+    if 'source' in news_df.columns:
+        source_col = 'source'
+    elif 'publisher' in news_df.columns:
+        source_col = 'publisher'
+
+    if source_col is None or len(news_df) == 0:
+        print("No source/publisher column found.")
+        return None
+
+    fig, ax = plt.subplots(figsize=_get_figsize())
+
+    source_counts = news_df[source_col].value_counts().head(top_n)
+    colors = _get_colors(len(source_counts))
+
+    y_pos = range(len(source_counts))
+    ax.barh(y_pos, source_counts.values, color=colors, alpha=0.8, edgecolor='black')
+
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(source_counts.index, fontsize=10)
+    ax.invert_yaxis()
+
+    ax.set_xlabel('Number of Articles', fontweight='bold', fontsize=12)
+    ax.set_title(f'Top {top_n} News Sources', fontweight='bold', fontsize=14)
+    ax.grid(alpha=0.3, axis='x')
+
+    for i, (count, pct) in enumerate(zip(source_counts.values,
+                                          source_counts.values / source_counts.sum() * 100)):
+        ax.text(count + 0.5, i, f'{count} ({pct:.1f}%)', va='center', fontsize=9)
+
+    plt.tight_layout()
+
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return source_counts.to_frame('count')
+
+
+def plot_news_hourly_coverage(news_df: pd.DataFrame, save_path: str = None, show: bool = True):
+    """
+    Plot news article count by hour of day.
+
+    Args:
+        news_df: News dataframe with datetime index
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
+
+    Returns:
+        Series with hourly counts
+    """
+    if not isinstance(news_df.index, pd.DatetimeIndex):
+        print("News dataframe must have DatetimeIndex.")
+        return None
+
+    fig, ax = plt.subplots(figsize=_get_figsize())
+
+    hourly_counts = news_df.groupby(news_df.index.hour).size()
+
+    ax.bar(hourly_counts.index, hourly_counts.values, color=_get_colors(1)[0],
+           alpha=0.8, edgecolor='black')
+
+    ax.set_xlabel('Hour of Day', fontweight='bold', fontsize=12)
+    ax.set_ylabel('Number of Articles', fontweight='bold', fontsize=12)
+    ax.set_title('News Coverage by Hour', fontweight='bold', fontsize=14)
+    ax.set_xticks(range(0, 24, 2))
+    ax.grid(alpha=0.3, axis='y')
+
+    peak_hour = hourly_counts.idxmax()
+    ax.axvline(peak_hour, color=_get_semantic_color('short'), linestyle='--', linewidth=2,
+               label=f'Peak: {peak_hour}:00')
+    ax.legend(loc='best')
+
+    plt.tight_layout()
+
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return hourly_counts

@@ -253,22 +253,56 @@ def actions_to_returns(
     return pd.Series(returns, index=spread.index)
 
 
+def compute_spread_normalizer(spread: pd.Series) -> float:
+    """
+    Compute mean absolute spread for percentage normalization.
+
+    Args:
+        spread: Series of price spreads (spot - day_ahead)
+
+    Returns:
+        Mean absolute spread value for normalization
+
+    Raises:
+        ValueError: If mean absolute spread is zero
+    """
+    mean_abs_spread = np.abs(spread).mean()
+    if mean_abs_spread == 0:
+        raise ValueError("Mean absolute spread is zero; cannot normalize to percentage.")
+    return mean_abs_spread
+
+
 def summarise_returns(
     returns: pd.Series,
     strategy_label: str,
-    periods_per_year: int = 24 * 365
+    periods_per_year: int = 24 * 365,
+    normalizer: float | None = None,
+    return_mode: str = 'percentage'
 ) -> dict[str, float | str]:
     """
     Summarise key performance statistics for a strategy's return series.
 
     Args:
-        returns: Strategy return series.
+        returns: Strategy return series (in absolute units, e.g., EUR/MWh).
         strategy_label: Name of the strategy.
         periods_per_year: Annualisation factor (default assumes hourly data).
+        normalizer: Mean absolute spread for percentage conversion.
+            Required if return_mode='percentage'.
+        return_mode: 'absolute' (EUR/MWh) or 'percentage' (% of mean spread).
 
     Returns:
-        Dictionary containing strategy statistics.
+        Dictionary containing strategy statistics with appropriate units.
+
+    Raises:
+        ValueError: If return_mode='percentage' but normalizer is not provided.
     """
+    if return_mode == 'percentage' and normalizer is None:
+        raise ValueError("normalizer must be provided when return_mode='percentage'")
+
+    # Scale factor for percentage conversion
+    scale = (100.0 / normalizer) if return_mode == 'percentage' and normalizer else 1.0
+    unit_suffix = " (%)" if return_mode == 'percentage' else " (EUR/MWh)"
+
     cumulative = returns.cumsum()
     drawdown = cumulative - cumulative.cummax()
     mean_return = returns.mean()
@@ -287,12 +321,12 @@ def summarise_returns(
 
     return {
         "Strategy": strategy_label,
-        "Total Return": cumulative.iloc[-1] if not cumulative.empty else 0.0,
-        "Average Return": mean_return,
-        "Volatility": volatility,
+        f"Total Return{unit_suffix}": (cumulative.iloc[-1] if not cumulative.empty else 0.0) * scale,
+        f"Avg Return{unit_suffix}": mean_return * scale,
+        f"Volatility{unit_suffix}": volatility * scale,
         "Sharpe (annualised)": sharpe,
         "Sortino (annualised)": sortino,
-        "Max Drawdown": drawdown.min() if not drawdown.empty else 0.0,
+        f"Max Drawdown{unit_suffix}": (drawdown.min() if not drawdown.empty else 0.0) * scale,
         "Win Rate (%)": win_rate,
         "Number of Trades": int(n_trades),
     }
@@ -324,7 +358,9 @@ def compute_strategy_returns(
 
 def summarise_strategy_set(
     returns_map: dict[str, pd.Series],
-    periods_per_year: int = 24 * 365
+    periods_per_year: int = 24 * 365,
+    normalizer: float | None = None,
+    return_mode: str = 'percentage'
 ) -> pd.DataFrame:
     """
     Summarise multiple strategies into a DataFrame.
@@ -332,12 +368,14 @@ def summarise_strategy_set(
     Args:
         returns_map: Mapping of strategy name to return series.
         periods_per_year: Annualisation factor for Sharpe ratio.
+        normalizer: Mean absolute spread for percentage conversion.
+        return_mode: 'absolute' or 'percentage'.
 
     Returns:
         DataFrame indexed by strategy with summary metrics.
     """
     summaries = [
-        summarise_returns(series, name, periods_per_year)
+        summarise_returns(series, name, periods_per_year, normalizer, return_mode)
         for name, series in returns_map.items()
     ]
     return pd.DataFrame(summaries).set_index("Strategy")
@@ -365,7 +403,7 @@ def setup_backtest_strategies(
     signal_predictions: np.ndarray,
     baseline_predictions: np.ndarray,
     label_encoder=None
-) -> tuple[pd.Series, dict[str, np.ndarray]]:
+) -> tuple[pd.Series, dict[str, np.ndarray], float]:
     """
     Set up backtesting strategies and compute spread series.
 
@@ -376,7 +414,8 @@ def setup_backtest_strategies(
         label_encoder: Optional label encoder to decode predictions
 
     Returns:
-        Tuple of (spread_series, strategy_actions_dict)
+        Tuple of (spread_series, strategy_actions_dict, spread_normalizer)
+        where spread_normalizer is the mean absolute spread for % normalization.
     """
     # Resolve column names
     spot_col = get_column_name(
@@ -399,6 +438,9 @@ def setup_backtest_strategies(
     day_ahead_series = test_df[day_ahead_col]
     spread_series = spot_series - day_ahead_series
 
+    # Compute normalizer for percentage returns
+    spread_normalizer = compute_spread_normalizer(spread_series)
+
     # Decode predictions if encoder provided
     if label_encoder is not None:
         signal_decoded = label_encoder.inverse_transform(signal_predictions)
@@ -414,4 +456,4 @@ def setup_backtest_strategies(
         "Naive Buy-DA/Sell-Spot": np.ones_like(signal_decoded, dtype=int),
     }
 
-    return spread_series, strategy_actions
+    return spread_series, strategy_actions, spread_normalizer

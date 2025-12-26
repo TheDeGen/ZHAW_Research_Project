@@ -174,3 +174,41 @@ TIME_DECAY_LAMBDAS = [0.01, 0.05, 0.1, 0.25, 0.5]
 NEWS_DATA_PATH = "german_news_v1.csv"
 ENERGY_DATA_PATH = "energy_baseline.csv"
 MIN_TIMESTAMP = "2025-01-01"
+
+# ============================================================================
+# VISUALIZATION CONFIGURATION
+# ============================================================================
+
+# Standard figure size for all plots (width, height in inches)
+DEFAULT_FIGSIZE = (12, 8)
+DEFAULT_DPI = 150
+
+# ColorBrewer Dark2 palette (colorblind-safe)
+# Reference: https://colorbrewer2.org/#type=qualitative&scheme=Dark2&n=8
+VIZ_COLOR_LIST = [
+    "#1B9E77",  # Teal
+    "#D95F02",  # Orange
+    "#7570B3",  # Purple
+    "#E7298A",  # Pink
+    "#66A61E",  # Green
+    "#E6AB02",  # Yellow
+    "#A6761D",  # Brown
+    "#666666",  # Gray
+]
+
+# Semantic color mappings for specific use cases
+VIZ_SEMANTIC_COLORS = {
+    "long": "#1B9E77",       # Teal for positive/long positions
+    "neutral": "#666666",    # Gray for neutral
+    "short": "#D95F02",      # Orange for negative/short positions
+    "train": "#1B9E77",      # Teal for training metrics
+    "validation": "#D95F02", # Orange for validation metrics
+    "test": "#7570B3",       # Purple for test metrics
+}
+
+# Colormaps for heatmaps (colorblind-safe)
+VIZ_CMAP_SEQUENTIAL = "YlGnBu"   # Yellow-Green-Blue for sequential data
+VIZ_CMAP_DIVERGING = "RdYlBu"    # Red-Yellow-Blue for diverging data
+
+# Output directory for saved figures
+FIGURES_OUTPUT_DIR = "outputs/figures"
