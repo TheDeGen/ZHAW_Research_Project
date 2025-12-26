@@ -120,3 +120,6 @@ dmypy.json
 
 # ds store
 .DS_Store
+
+# PDF files
+*.pdf
