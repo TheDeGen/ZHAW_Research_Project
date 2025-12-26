@@ -77,31 +77,29 @@ EMBEDDING_DIM = 384
 ZEROSHOT_MODEL = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
 
 HIERARCHICAL_TOPIC_GROUPS = {
-    "Nachfrage": [
-        "der Stromverbrauch in Deutschland steigt",
-        "der Stromverbrauch in Deutschland fällt",
+    "Politik & öffentliche Ordnung": [
+        "Regierung, Parlament oder Behörden beschließen strengere Gesetze, Steuern oder Auflagen",
+        "Regierung, Parlament oder Behörden lockern Gesetze, Steuern oder Auflagen",
     ],
-    "Angebot": [
-        "die Stromerzeugung aus Wind und Sonne steigt",
-        "die Stromerzeugung aus Wind und Sonne fällt",
-        "Störungen oder Ausfälle bei Netzen oder Kraftwerken verringern das Angebot",
-        "der Ausbau von LNG-Terminals, Pipelines oder Kraftwerken erhöht das Angebot",
+    "Internationale Beziehungen & Sicherheit": [
+        "Krieg, Konflikt, Terrorgefahr oder Sanktionen verschärfen die internationale Sicherheitslage",
+        "Waffenruhe, Friedensgespräche oder Aufhebung von Sanktionen entspannen die internationale Sicherheitslage",
     ],
-    "Brennstoffpreise": [
-        "die Großhandelspreise für Erdgas steigen",
-        "die Großhandelspreise für Erdgas fallen",
+    "Wirtschaft, Unternehmen & Finanzen": [
+        "Rezession, Unternehmenskrise, Bankenturbulenzen oder steigende Zinsen belasten die Wirtschaft",
+        "Konjunkturerholung, starke Unternehmenszahlen oder sinkende Zinsen stützen die Wirtschaft",
     ],
-    "Makrofinanzen": [
-        "steigende Zinsen oder hohe Inflation verschärfen die Marktlage",
-        "sinkende Zinsen oder nachlassende Inflation beruhigen die Marktlage",
+    "Energie, Klima & Umwelt": [
+        "Öl-, Gas- oder Strommärkte stehen unter Druck oder es kommt zu Versorgungsstörungen",
+        "Öl-, Gas- oder Strommärkte entspannen sich oder Versorgungslage verbessert sich",
     ],
-    "Geopolitik": [
-        "geopolitische Spannungen oder Sanktionen verschärfen die Energieversorgung",
-        "geopolitische Entspannung oder gelockerte Sanktionen mindern Versorgungsrisiken",
+    "Technologie, Wissenschaft & Gesundheit": [
+        "Störungen, Ausfälle oder Sicherheitslücken bei IT/Technologie verursachen Risiken",
+        "Durchbrüche in Forschung, Medizin oder Technologie bringen Fortschritt und Entlastung",
     ],
-    "Wetter": [
-        "Kälte, Flaute oder wenig Sonne erhöhen den Strompreisdruck in Deutschland",
-        "mildes Wetter, viel Wind oder viel Sonne entlasten die Strompreise in Deutschland",
+    "Sport, Kultur & Lifestyle": [
+        "Sportereignisse, Kultur oder Prominenz sorgen für Kontroversen oder Skandale",
+        "Sportereignisse, Kultur oder Prominenz sorgen für Erfolge, Preise oder positive Resonanz",
     ],
     "Sonstiges": [
         "kein Bezug zu Energie, Wetter oder Finanzmärkten",
@@ -114,7 +112,15 @@ CANDIDATE_LABELS = [
 ]
 
 HIERARCHICAL_ROUTING_SETTINGS = {
-    "stage_order": ["Nachfrage", "Angebot", "Brennstoffpreise", "Makrofinanzen", "Geopolitik", "Wetter", "Sonstiges"],
+    "stage_order": [
+        "Politik & öffentliche Ordnung",
+        "Internationale Beziehungen & Sicherheit",
+        "Wirtschaft, Unternehmen & Finanzen",
+        "Energie, Klima & Umwelt",
+        "Technologie, Wissenschaft & Gesundheit",
+        "Sport, Kultur & Lifestyle",
+        "Sonstiges",
+    ],
     "stage_thresholds": {
         "stage1": 0.35,
         "stage2": 0.25,
