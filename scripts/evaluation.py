@@ -457,3 +457,355 @@ def setup_backtest_strategies(
     }
 
     return spread_series, strategy_actions, spread_normalizer
+
+
+def run_portfolio_backtest(
+    test_df: pd.DataFrame,
+    predictions: np.ndarray,
+    label_encoder=None,
+    initial_capital: float = 100_000.0,
+    position_pct: float = 0.10,
+    fixed_cost_per_mwh: float = 0.50,
+    pct_cost: float = 0.0005,
+) -> dict:
+    """
+    Run portfolio-based backtest simulation.
+    
+    Simulates trading with a portfolio starting at initial_capital EUR.
+    Each trade allocates position_pct of current portfolio value.
+    Returns include transaction costs (fixed per MWh + percentage of trade value).
+    
+    Args:
+        test_df: DataFrame with 'Spot Price' and 'Day Ahead Auction' columns
+        predictions: Model predictions (encoded or decoded)
+        label_encoder: Optional encoder to decode predictions
+        initial_capital: Starting portfolio value in EUR
+        position_pct: Fraction of portfolio to allocate per trade (e.g., 0.10 = 10%)
+        fixed_cost_per_mwh: Fixed transaction cost per MWh in EUR
+        pct_cost: Percentage transaction cost as decimal (e.g., 0.0005 = 0.05%)
+    
+    Returns:
+        dict with keys:
+        - 'equity_curve': pd.Series of portfolio values over time
+        - 'returns_pct': pd.Series of period returns (%)
+        - 'metrics': dict of summary statistics
+        - 'trade_log': pd.DataFrame with trade details (optional)
+    """
+    # Resolve column names
+    spot_col = get_column_name(
+        ["Spot Price", "spot_price", "SpotPrice"],
+        test_df
+    )
+    day_ahead_col = get_column_name(
+        ["Day Ahead Auction", "day_ahead_price", "DayAhead"],
+        test_df
+    )
+    
+    if spot_col is None or day_ahead_col is None:
+        raise KeyError(
+            f"Could not identify spot or day-ahead price columns. "
+            f"Available columns: {list(test_df.columns)}"
+        )
+    
+    # Extract price series
+    spot_series = test_df[spot_col].values
+    day_ahead_series = test_df[day_ahead_col].values
+    spread_series = spot_series - day_ahead_series
+    
+    # Decode predictions if encoder provided
+    if label_encoder is not None:
+        actions = label_encoder.inverse_transform(predictions)
+    else:
+        actions = predictions
+    
+    # #region agent log
+    import json; _log_path = "/Users/nicolas/Desktop/Repos/zhaw_arep/.cursor/debug.log"
+    with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v3", "hypothesisId": "H1", "location": "evaluation.py:520", "message": "label_decode_check", "data": {"encoder_classes": label_encoder.classes_.tolist() if label_encoder else None, "pred_sample": predictions[:10].tolist(), "actions_sample": actions[:10].tolist(), "unique_actions": list(map(int, np.unique(actions)))}, "timestamp": __import__("time").time()}) + "\n")
+    # #endregion
+    
+    # #region agent log
+    with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v3", "hypothesisId": "H2,H3", "location": "evaluation.py:524", "message": "price_data_check", "data": {"spot_min": float(spot_series.min()), "spot_max": float(spot_series.max()), "day_ahead_min": float(day_ahead_series.min()), "day_ahead_max": float(day_ahead_series.max()), "spread_min": float(spread_series.min()), "spread_max": float(spread_series.max()), "spread_mean": float(spread_series.mean()), "n_negative_day_ahead": int((day_ahead_series <= 0).sum())}, "timestamp": __import__("time").time()}) + "\n")
+    # #endregion
+    
+    # #region agent log
+    _action_counts = {int(k): int(v) for k, v in zip(*np.unique(actions, return_counts=True))}
+    with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v3", "hypothesisId": "H4", "location": "evaluation.py:528", "message": "action_distribution", "data": {"action_counts": _action_counts, "n_long": _action_counts.get(1, 0), "n_short": _action_counts.get(-1, 0), "n_neutral": _action_counts.get(0, 0)}, "timestamp": __import__("time").time()}) + "\n")
+    # #endregion
+    
+    # #region agent log - verify loop will execute
+    with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v3", "hypothesisId": "H6", "location": "evaluation.py:loop_start", "message": "loop_start", "data": {"n_periods": len(test_df), "first_10_actions": actions[:10].tolist()}, "timestamp": __import__("time").time()}) + "\n")
+    # #endregion
+    
+    # Initialize portfolio tracking
+    n_periods = len(test_df)
+    equity_curve = np.zeros(n_periods)
+    returns_pct = np.zeros(n_periods)
+    portfolio_value = initial_capital
+    
+    # Track trade details
+    trade_log = []
+    
+    # Simulate trading period by period
+    for i in range(n_periods):
+        equity_curve[i] = portfolio_value
+        
+        action = actions[i]
+        spot_price = spot_series[i]
+        day_ahead_price = day_ahead_series[i]
+        spread = spread_series[i]
+        
+        if action != 0:  # Trade signal
+            # Calculate position size - use INITIAL capital to prevent compounding explosion
+            # This models realistic fixed-size trading rather than exponential scaling
+            position_value = initial_capital * position_pct
+            
+            # Calculate MWh traded
+            # Use day_ahead_price as reference for position sizing
+            # Guard: Use minimum price floor to prevent position explosion from very low prices
+            price_floor = 50.0  # EUR/MWh minimum for position sizing
+            sizing_price = max(abs(day_ahead_price), price_floor)
+            mwh_traded_raw = position_value / sizing_price if portfolio_value > 0 else 0
+            
+            # Cap MWh to realistic market liquidity (max 200 MWh per trade)
+            max_mwh_per_trade = 200.0
+            mwh_traded = min(mwh_traded_raw, max_mwh_per_trade)
+            
+            # Calculate gross P&L
+            # Action +1 (Long): profit when spread > 0 (spot > day_ahead)
+            # Action -1 (Short): profit when spread < 0 (spot < day_ahead)
+            gross_pnl = mwh_traded * spread * action
+            
+            # Calculate transaction costs
+            # Ensure minimum cost of 0.015 EUR/MWh traded
+            min_cost_per_mwh = 0.015
+            effective_cost_per_mwh = max(fixed_cost_per_mwh, min_cost_per_mwh)
+            fixed_cost = mwh_traded * effective_cost_per_mwh
+            pct_cost_amount = position_value * pct_cost
+            total_cost = fixed_cost + pct_cost_amount
+            
+            # Net P&L
+            net_pnl = gross_pnl - total_cost
+            
+            # #region agent log
+            if i < 10 or (net_pnl < -1000):  # Log first 10 trades and any large losses
+                import json; _log_path = "/Users/nicolas/Desktop/Repos/zhaw_arep/.cursor/debug.log"
+                with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v4", "hypothesisId": "H7", "location": "evaluation.py:pnl_calc", "message": "trade_details", "data": {"period": i, "action": int(action), "spot": float(spot_price), "day_ahead": float(day_ahead_price), "sizing_price": float(sizing_price), "spread": float(spread), "position_value": float(position_value), "mwh_raw": float(mwh_traded_raw), "mwh_traded": float(mwh_traded), "mwh_capped": bool(mwh_traded_raw > max_mwh_per_trade), "cost_per_mwh": float(effective_cost_per_mwh), "total_cost": float(total_cost), "gross_pnl": float(gross_pnl), "net_pnl": float(net_pnl), "portfolio_before": float(equity_curve[i]), "portfolio_after": float(portfolio_value + net_pnl)}, "timestamp": __import__("time").time()}) + "\n")
+            # #endregion
+            
+            # Update portfolio
+            portfolio_value += net_pnl
+            
+            # Log trade details
+            trade_log.append({
+                'period': i,
+                'action': action,
+                'spot_price': spot_price,
+                'day_ahead_price': day_ahead_price,
+                'spread': spread,
+                'position_value': position_value,
+                'mwh_traded': mwh_traded,
+                'gross_pnl': gross_pnl,
+                'cost_per_mwh': effective_cost_per_mwh,
+                'fixed_cost': fixed_cost,
+                'pct_cost': pct_cost_amount,
+                'total_cost': total_cost,
+                'net_pnl': net_pnl,
+                'portfolio_value': portfolio_value,
+            })
+        else:
+            # No trade - portfolio unchanged
+            trade_log.append({
+                'period': i,
+                'action': 0,
+                'spot_price': spot_price,
+                'day_ahead_price': day_ahead_price,
+                'spread': spread,
+                'position_value': 0.0,
+                'mwh_traded': 0.0,
+                'gross_pnl': 0.0,
+                'fixed_cost': 0.0,
+                'pct_cost': 0.0,
+                'total_cost': 0.0,
+                'net_pnl': 0.0,
+                'portfolio_value': portfolio_value,
+            })
+        
+        # Calculate period return (%)
+        if i > 0:
+            returns_pct[i] = ((portfolio_value - equity_curve[i-1]) / equity_curve[i-1]) * 100
+        else:
+            returns_pct[i] = 0.0
+    
+    # Convert to Series with test_df index
+    equity_curve_series = pd.Series(equity_curve, index=test_df.index)
+    returns_pct_series = pd.Series(returns_pct, index=test_df.index)
+    
+    # Calculate summary metrics
+    final_value = equity_curve[-1]
+    total_return_pct = ((final_value - initial_capital) / initial_capital) * 100
+    
+    # Annualized return (assuming hourly data, 24*365 periods per year)
+    periods_per_year = 24 * 365
+    n_years = n_periods / periods_per_year
+    if n_years >= 0.01:  # At least ~3.6 days to avoid numerical issues
+        annualized_return = ((final_value / initial_capital) ** (1 / n_years) - 1) * 100
+    else:
+        # Use simple return for very short periods to avoid RuntimeWarning
+        annualized_return = total_return_pct
+    
+    # Risk metrics
+    period_returns = returns_pct_series[returns_pct_series != 0]
+    if len(period_returns) > 0:
+        volatility = period_returns.std() * np.sqrt(periods_per_year)
+        sharpe = (annualized_return / volatility) if volatility > 0 else np.nan
+        
+        # Sortino ratio (downside deviation)
+        downside_returns = period_returns[period_returns < 0]
+        downside_std = downside_returns.std() * np.sqrt(periods_per_year) if len(downside_returns) > 1 else np.nan
+        sortino = (annualized_return / downside_std) if downside_std > 0 and downside_std > 0 else np.nan
+    else:
+        volatility = np.nan
+        sharpe = np.nan
+        sortino = np.nan
+    
+    # Drawdown
+    running_max = equity_curve_series.cummax()
+    drawdown = equity_curve_series - running_max
+    max_drawdown_pct = (drawdown.min() / running_max.max()) * 100 if running_max.max() > 0 else 0.0
+    
+    # Win rate
+    trade_pnls = [t['net_pnl'] for t in trade_log if t['action'] != 0]
+    n_trades = len(trade_pnls)
+    n_wins = sum(1 for pnl in trade_pnls if pnl > 0)
+    win_rate = (n_wins / n_trades * 100) if n_trades > 0 else 0.0
+    
+    # Total costs
+    total_costs = sum(t['total_cost'] for t in trade_log)
+    
+    metrics = {
+        'Final Value (EUR)': final_value,
+        'Total Return (%)': total_return_pct,
+        'Annualized Return (%)': annualized_return,
+        'Sharpe Ratio': sharpe,
+        'Sortino Ratio': sortino,
+        'Max Drawdown (%)': max_drawdown_pct,
+        'Win Rate (%)': win_rate,
+        'Total Trades': n_trades,
+        'Total Costs (EUR)': total_costs,
+    }
+    
+    # #region agent log
+    import json; _log_path = "/Users/nicolas/Desktop/Repos/zhaw_arep/.cursor/debug.log"
+    _gross_pnls = [t['gross_pnl'] for t in trade_log if t['action'] != 0]
+    _winning_pnls = [p for p in trade_pnls if p > 0]
+    _losing_pnls = [p for p in trade_pnls if p < 0]
+    with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v3", "hypothesisId": "summary", "location": "evaluation.py:metrics", "message": "backtest_summary", "data": {"initial_capital": initial_capital, "final_value": float(final_value), "total_return_pct": float(total_return_pct), "n_trades": n_trades, "n_wins": n_wins, "win_rate": float(win_rate), "total_costs": float(total_costs), "sum_gross_pnl": float(sum(_gross_pnls)) if _gross_pnls else 0, "sum_net_pnl": float(sum(trade_pnls)) if trade_pnls else 0, "avg_win": float(sum(_winning_pnls)/len(_winning_pnls)) if _winning_pnls else 0, "avg_loss": float(sum(_losing_pnls)/len(_losing_pnls)) if _losing_pnls else 0}, "timestamp": __import__("time").time()}) + "\n")
+    # #endregion
+    
+    return {
+        'equity_curve': equity_curve_series,
+        'returns_pct': returns_pct_series,
+        'metrics': metrics,
+        'trade_log': pd.DataFrame(trade_log),
+    }
+
+
+def analyze_equity_tail(
+    backtest_result: dict,
+    n_periods: int = 20,
+    initial_capital: float = 100_000.0,
+) -> None:
+    """
+    Analyze the tail end of equity curve to investigate large drops.
+    
+    Prints summary statistics for the last N periods including:
+    - Cumulative P&L in the tail period
+    - Number of trades and their outcomes
+    - Largest individual losses
+    - Spread statistics
+    
+    Args:
+        backtest_result: Dictionary returned from run_portfolio_backtest
+        n_periods: Number of periods from the end to analyze (default: 20)
+        initial_capital: Initial portfolio value for percentage calculations
+    """
+    trade_log = backtest_result['trade_log']
+    equity_curve = backtest_result['equity_curve']
+    
+    if len(trade_log) < n_periods:
+        n_periods = len(trade_log)
+    
+    # Get tail period data
+    tail_log = trade_log.tail(n_periods).copy()
+    tail_equity = equity_curve.tail(n_periods)
+    
+    # Calculate statistics
+    tail_start_value = tail_equity.iloc[0]
+    tail_end_value = tail_equity.iloc[-1]
+    tail_pnl = tail_end_value - tail_start_value
+    tail_pnl_pct = (tail_pnl / tail_start_value) * 100
+    
+    # Filter to actual trades
+    tail_trades = tail_log[tail_log['action'] != 0].copy()
+    n_tail_trades = len(tail_trades)
+    
+    print(f"\n{'='*70}")
+    print(f"EQUITY TAIL ANALYSIS (Last {n_periods} periods)")
+    print(f"{'='*70}\n")
+    
+    print(f"Period Range: {tail_log.iloc[0]['period']} to {tail_log.iloc[-1]['period']}")
+    print(f"Starting Value: €{tail_start_value:,.2f}")
+    print(f"Ending Value: €{tail_end_value:,.2f}")
+    print(f"Total P&L: €{tail_pnl:,.2f} ({tail_pnl_pct:+.2f}%)")
+    print(f"Number of Trades: {n_tail_trades}\n")
+    
+    if n_tail_trades > 0:
+        # Trade statistics
+        winning_trades = tail_trades[tail_trades['net_pnl'] > 0]
+        losing_trades = tail_trades[tail_trades['net_pnl'] < 0]
+        
+        print(f"Winning Trades: {len(winning_trades)}")
+        print(f"Losing Trades: {len(losing_trades)}")
+        print(f"Win Rate: {len(winning_trades) / n_tail_trades * 100:.1f}%\n")
+        
+        # Largest losses
+        if len(losing_trades) > 0:
+            largest_losses = losing_trades.nsmallest(5, 'net_pnl')
+            print("Top 5 Largest Losses:")
+            print("-" * 70)
+            for idx, row in largest_losses.iterrows():
+                print(f"  Period {int(row['period'])}: "
+                      f"Action={int(row['action'])}, "
+                      f"Spread={row['spread']:.2f} EUR/MWh, "
+                      f"P&L=€{row['net_pnl']:.2f}")
+            print()
+        
+        # Spread statistics
+        print(f"Spread Statistics (tail period):")
+        print(f"  Mean: {tail_log['spread'].mean():.2f} EUR/MWh")
+        print(f"  Std: {tail_log['spread'].std():.2f} EUR/MWh")
+        print(f"  Min: {tail_log['spread'].min():.2f} EUR/MWh")
+        print(f"  Max: {tail_log['spread'].max():.2f} EUR/MWh")
+        print()
+        
+        # Action distribution
+        action_counts = tail_trades['action'].value_counts().sort_index()
+        print("Action Distribution:")
+        for action, count in action_counts.items():
+            action_name = "Long" if action == 1 else "Short" if action == -1 else "Neutral"
+            print(f"  {action_name} ({action}): {count} trades")
+        print()
+        
+        # Cumulative P&L by action
+        if len(tail_trades) > 0:
+            print("Cumulative P&L by Action:")
+            for action in [-1, 1]:
+                action_trades = tail_trades[tail_trades['action'] == action]
+                if len(action_trades) > 0:
+                    action_pnl = action_trades['net_pnl'].sum()
+                    action_name = "Long" if action == 1 else "Short"
+                    print(f"  {action_name}: €{action_pnl:,.2f}")
+    else:
+        print("No trades in tail period.\n")
+    
+    print(f"{'='*70}\n")

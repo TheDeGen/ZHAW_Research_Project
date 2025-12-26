@@ -29,7 +29,7 @@ DEFAULT_LOOKBACK_WINDOW = HOURS_PER_TWO_WEEKS  # 336 hours (2 weeks)
 DEFAULT_DECAY_LAMBDA = 0.05  # Exponential decay rate
 
 # Target variable parameters
-SPREAD_TARGET_DEADBAND = 7.0  # EUR/MWh band for neutral class
+SPREAD_TARGET_DEADBAND = 3.0  # EUR/MWh band for neutral class
 TARGET_COLUMN = 'spread_target_shift_24'
 
 # ============================================================================

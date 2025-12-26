@@ -1623,3 +1623,184 @@ def plot_news_hourly_coverage(news_df: pd.DataFrame, save_path: str = None, show
         plt.close(fig)
 
     return hourly_counts
+
+
+def plot_equity_curve(
+    equity_curves: dict[str, pd.Series],
+    initial_capital: float = 100_000.0,
+    title: str = "Portfolio Equity Curve",
+    save_path: str = None,
+    show: bool = True,
+    show_pct_return: bool = True,
+) -> None:
+    """
+    Plot equity curves for multiple strategies.
+    
+    Args:
+        equity_curves: Dictionary mapping strategy name to equity curve Series
+        initial_capital: Initial portfolio value for reference line
+        title: Plot title
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
+        show_pct_return: If True, display percentage returns instead of absolute EUR values
+    
+    Returns:
+        Tuple of (fig, ax) if show=False, else None
+    """
+    fig, ax = plt.subplots(figsize=_get_figsize())
+    
+    colors = _get_colors(len(equity_curves))
+    linestyles = ['-', '--', '-.', ':']
+    
+    for idx, (name, equity) in enumerate(equity_curves.items()):
+        color = colors[idx % len(colors)]
+        linestyle = linestyles[idx % len(linestyles)]
+        
+        # Handle datetime index
+        if isinstance(equity.index, pd.DatetimeIndex):
+            if equity.index.tz is not None:
+                index = equity.index.tz_convert(None)
+            else:
+                index = equity.index
+            x_values = index.to_pydatetime()
+        else:
+            x_values = equity.index
+        
+        # Convert to percentage returns if requested
+        if show_pct_return:
+            equity_values = ((equity.values / initial_capital) - 1) * 100
+        else:
+            equity_values = equity.values
+        
+        ax.plot(x_values, equity_values, label=name, color=color, 
+                linestyle=linestyle, linewidth=2, alpha=0.8)
+    
+    # Add reference line (0% for percentage, initial capital for absolute)
+    if show_pct_return:
+        ax.axhline(0, color='gray', linestyle=':', linewidth=1.5, 
+                   alpha=0.5, label='Break-even (0%)')
+    else:
+        ax.axhline(initial_capital, color='gray', linestyle=':', linewidth=1.5, 
+                   alpha=0.5, label=f'Initial Capital (€{initial_capital:,.0f})')
+    
+    ax.set_xlabel('Time', fontweight='bold', fontsize=12)
+    if show_pct_return:
+        ax.set_ylabel('Portfolio Return (%)', fontweight='bold', fontsize=12)
+    else:
+        ax.set_ylabel('Portfolio Value (EUR)', fontweight='bold', fontsize=12)
+    ax.set_title(title, fontweight='bold', fontsize=14)
+    ax.legend(loc='best', framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+    
+    # Format y-axis
+    if show_pct_return:
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1f}%'))
+    else:
+        ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'€{x:,.0f}'))
+    
+    plt.tight_layout()
+    
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+        return fig, ax
+
+
+def plot_portfolio_drawdown(
+    equity_curves: dict[str, pd.Series],
+    initial_capital: float = 100_000.0,
+    title: str = "Portfolio Drawdown Analysis",
+    save_path: str = None,
+    show: bool = True,
+    show_pct_return: bool = True,
+) -> None:
+    """
+    Plot drawdown analysis for portfolio equity curves.
+    
+    Args:
+        equity_curves: Dictionary mapping strategy name to equity curve Series
+        initial_capital: Initial portfolio value (required for percentage conversion)
+        title: Plot title
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
+        show_pct_return: If True, display percentage returns instead of absolute EUR values
+    
+    Returns:
+        Tuple of (fig, axes) if show=False, else None
+    """
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=_get_figsize(), sharex=True)
+    
+    colors = _get_colors(len(equity_curves))
+    linestyles = ['-', '--', '-.', ':']
+    
+    for idx, (name, equity) in enumerate(equity_curves.items()):
+        color = colors[idx % len(colors)]
+        linestyle = linestyles[idx % len(linestyles)]
+        
+        # Handle datetime index
+        if isinstance(equity.index, pd.DatetimeIndex):
+            if equity.index.tz is not None:
+                index = equity.index.tz_convert(None)
+            else:
+                index = equity.index
+            x_values = index.to_pydatetime()
+        else:
+            x_values = equity.index
+        
+        # Calculate drawdown (always use absolute values for drawdown calculation)
+        running_max = equity.cummax()
+        drawdown = equity - running_max
+        drawdown_pct = (drawdown / running_max.replace(0, np.nan)) * 100
+        
+        # Convert equity curve to percentage returns if requested
+        if show_pct_return:
+            equity_values = ((equity.values / initial_capital) - 1) * 100
+        else:
+            equity_values = equity.values
+        
+        # Plot equity curve
+        ax1.plot(x_values, equity_values, label=name, color=color,
+                linestyle=linestyle, linewidth=2, alpha=0.8)
+        
+        # Plot drawdown
+        ax2.fill_between(x_values, 0, drawdown_pct.values, alpha=0.3, 
+                        label=name, color=color)
+        ax2.plot(x_values, drawdown_pct.values, linewidth=1.5, 
+                color=color, linestyle=linestyle)
+    
+    ax1.set_title(f'{title} - Equity Curves', fontsize=14, fontweight='bold')
+    if show_pct_return:
+        ax1.set_ylabel('Portfolio Return (%)', fontsize=12, fontweight='bold')
+        ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1f}%'))
+        ax1.axhline(0, color='gray', linestyle=':', linewidth=1, alpha=0.5)
+    else:
+        ax1.set_ylabel('Portfolio Value (EUR)', fontsize=12, fontweight='bold')
+        ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'€{x:,.0f}'))
+    ax1.legend(loc='best', framealpha=0.9)
+    ax1.grid(alpha=0.3)
+    
+    ax2.set_title('Drawdown (% of Peak)', fontsize=14, fontweight='bold')
+    ax2.set_xlabel('Time', fontsize=12, fontweight='bold')
+    ax2.set_ylabel('Drawdown (%)', fontsize=12, fontweight='bold')
+    ax2.legend(loc='best', framealpha=0.9)
+    ax2.grid(alpha=0.3)
+    ax2.axhline(0, color='black', linestyle='-', linewidth=0.8, alpha=0.5)
+    
+    plt.tight_layout()
+    
+    # Get equity from last iteration for date formatting
+    if equity_curves:
+        first_equity = next(iter(equity_curves.values()))
+        if isinstance(first_equity.index, pd.DatetimeIndex):
+            plt.gcf().autofmt_xdate()
+    
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+        return fig, (ax1, ax2)
