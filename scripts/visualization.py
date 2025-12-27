@@ -1804,3 +1804,286 @@ def plot_portfolio_drawdown(
     else:
         plt.close(fig)
         return fig, (ax1, ax2)
+
+
+def plot_event_importance_heatmap(
+    topic_counts_df: pd.DataFrame,
+    spread_series: pd.Series,
+    rolling_window_weeks: int = 4,
+    save_path: str = None,
+    show: bool = True,
+):
+    """
+    Plot event importance heatmap showing rolling correlation between topic counts and spread changes.
+    
+    Similar to Chakraborty et al. style visualization, this shows how different news event types
+    vary in importance for price prediction over time periods.
+    
+    Args:
+        topic_counts_df: DataFrame with datetime index and topic columns (from compute_time_decayed_topic_counts)
+        spread_series: Series with datetime index representing price spread (real_spread_abs)
+        rolling_window_weeks: Number of weeks for rolling correlation window (default: 4)
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
+    
+    Returns:
+        DataFrame with correlation values (topics x weeks)
+    """
+    from scipy.stats import pearsonr
+    
+    # Align indices and resample to weekly frequency
+    topic_weekly = topic_counts_df.resample('W').mean()
+    spread_weekly = spread_series.resample('W').mean()
+    
+    # Compute spread changes (week-over-week difference)
+    spread_change = spread_weekly.diff()
+    
+    # Align time indices
+    common_index = topic_weekly.index.intersection(spread_change.index)
+    topic_weekly = topic_weekly.loc[common_index]
+    spread_change = spread_change.loc[common_index]
+    
+    # Compute rolling correlations for each topic
+    window_size = rolling_window_weeks
+    correlation_matrix = []
+    topic_names = []
+    
+    for topic_col in topic_counts_df.columns:
+        topic_series = topic_weekly[topic_col]
+        
+        # Compute rolling correlation
+        rolling_corrs = []
+        for i in range(window_size, len(common_index)):
+            window_topic = topic_series.iloc[i-window_size:i]
+            window_spread = spread_change.iloc[i-window_size:i]
+            
+            # Remove NaN values
+            valid_mask = ~(window_topic.isna() | window_spread.isna())
+            if valid_mask.sum() < 3:  # Need at least 3 points for correlation
+                rolling_corrs.append(np.nan)
+            else:
+                corr, _ = pearsonr(window_topic[valid_mask], window_spread[valid_mask])
+                rolling_corrs.append(corr)
+        
+        # Pad with NaN for initial weeks
+        rolling_corrs = [np.nan] * window_size + rolling_corrs
+        correlation_matrix.append(rolling_corrs)
+        topic_names.append(topic_col)
+    
+    # Create DataFrame with correlations
+    corr_df = pd.DataFrame(
+        correlation_matrix,
+        index=topic_names,
+        columns=common_index
+    )
+    
+    # Normalize correlations to [0, 1] scale for heatmap visualization
+    # Use absolute value and normalize per row
+    corr_abs = corr_df.abs()
+    corr_normalized = corr_abs.div(corr_abs.max(axis=1), axis=0).fillna(0)
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(16, max(10, len(topic_names) * 0.5)))
+    
+    # Create heatmap
+    im = ax.imshow(
+        corr_normalized.values,
+        aspect='auto',
+        cmap='Reds',
+        interpolation='nearest',
+        vmin=0,
+        vmax=1
+    )
+    
+    # Set ticks and labels
+    ax.set_yticks(range(len(topic_names)))
+    ax.set_yticklabels([name[:60] + '...' if len(name) > 60 else name for name in topic_names], fontsize=9)
+    
+    # Format x-axis with weekly labels (show every 4 weeks)
+    n_weeks = len(common_index)
+    tick_step = max(1, n_weeks // 20)  # Show ~20 labels max
+    ax.set_xticks(range(0, n_weeks, tick_step))
+    ax.set_xticklabels(
+        [common_index[i].strftime('%Y-%m-%d') for i in range(0, n_weeks, tick_step)],
+        rotation=45,
+        ha='right',
+        fontsize=8
+    )
+    
+    # Add colorbar
+    cbar = plt.colorbar(im, ax=ax, fraction=0.02, pad=0.02)
+    cbar.set_label('Event Importance (Normalized Correlation)', fontweight='bold', fontsize=11)
+    cbar.ax.tick_params(labelsize=9)
+    
+    # Add labels
+    ax.set_xlabel('Time Period (Weekly)', fontweight='bold', fontsize=12)
+    ax.set_ylabel('Event Type', fontweight='bold', fontsize=12)
+    ax.set_title(
+        f'Variation in Event Importance Over Time\n'
+        f'(Rolling {rolling_window_weeks}-week correlation with spread changes)',
+        fontweight='bold',
+        fontsize=14,
+        pad=20
+    )
+    
+    plt.tight_layout()
+    
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+    
+    return corr_df
+
+
+def plot_news_shocks_vs_price(
+    news_df: pd.DataFrame,
+    spread_series: pd.Series,
+    price_series: pd.Series = None,
+    save_path: str = None,
+    show: bool = True,
+):
+    """
+    Plot positive and negative news shocks compared with price/spread series.
+    
+    Creates dual-axis charts showing news shock counts (bars) overlaid with
+    price/spread series (line) over time, similar to academic research visualizations.
+    
+    Args:
+        news_df: DataFrame with datetime index and 'classification' column
+        spread_series: Series with datetime index representing price spread (real_spread_abs)
+        price_series: Optional series for price (Spot Price). If None, uses spread_series
+        save_path: Optional filename to save (without extension)
+        show: Whether to display the plot
+    
+    Returns:
+        DataFrame with weekly news shock counts
+    """
+    from config import pipeline_config as cfg
+    
+    # Ensure news_df has DatetimeIndex
+    news_df_copy = news_df.copy()
+    if not isinstance(news_df_copy.index, pd.DatetimeIndex):
+        if 'publishedAt' in news_df_copy.columns:
+            news_df_copy['publishedAt'] = pd.to_datetime(news_df_copy['publishedAt'])
+            news_df_copy = news_df_copy.set_index('publishedAt')
+        else:
+            raise ValueError("news_df must have a DatetimeIndex or 'publishedAt' column")
+    
+    # Remove timezone if present
+    if news_df_copy.index.tz is not None:
+        news_df_copy.index = news_df_copy.index.tz_localize(None)
+    
+    # Get valence mapping
+    valence_map = cfg.TOPIC_VALENCE_MAP
+    
+    # Map classifications to valence
+    news_df_copy['valence'] = news_df_copy['classification'].map(valence_map).fillna(0)
+    
+    # Filter out neutral/other articles for shock visualization
+    news_shocks = news_df_copy[news_df_copy['valence'] != 0].copy()
+    
+    # Resample to weekly frequency
+    news_weekly = news_shocks.resample('W').agg({
+        'valence': lambda x: (x == 1).sum()  # Count positive
+    })
+    news_weekly['negative_count'] = news_shocks.resample('W').agg({
+        'valence': lambda x: (x == -1).sum()
+    })['valence']
+    news_weekly['positive_count'] = news_weekly['valence']
+    news_weekly = news_weekly.drop(columns=['valence'])
+    
+    # Resample price/spread series to weekly
+    if price_series is not None:
+        price_weekly = price_series.resample('W').mean()
+        price_label = 'Price'
+        price_unit = 'EUR/MWh'
+    else:
+        price_weekly = spread_series.resample('W').mean()
+        price_label = 'Spread'
+        price_unit = 'EUR/MWh'
+    
+    # Align indices
+    common_index = news_weekly.index.intersection(price_weekly.index)
+    news_weekly = news_weekly.loc[common_index]
+    price_weekly = price_weekly.loc[common_index]
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(16, 10), sharex=True)
+    
+    # Plot 1: Positive news shocks
+    ax1_twin = ax1.twinx()
+    
+    # Bars for positive news
+    ax1.bar(
+        news_weekly.index,
+        news_weekly['positive_count'],
+        width=5,  # 5 days width for weekly bars
+        color='#D95F02',  # Orange for positive (matches semantic color scheme)
+        alpha=0.7,
+        label='Positive News Shocks'
+    )
+    
+    # Line for price/spread
+    ax1_twin.plot(
+        price_weekly.index,
+        price_weekly.values,
+        color='black',
+        linewidth=2,
+        label=f'{price_label} ({price_unit})'
+    )
+    
+    ax1.set_ylabel('Number of Positive News Shocks', fontweight='bold', fontsize=12, color='#D95F02')
+    ax1_twin.set_ylabel(f'{price_label} ({price_unit})', fontweight='bold', fontsize=12)
+    ax1.set_title('Positive News Shocks and Price/Spread', fontweight='bold', fontsize=14)
+    ax1.tick_params(axis='y', labelcolor='#D95F02')
+    ax1.grid(alpha=0.3, axis='y')
+    ax1.legend(loc='upper left', framealpha=0.9)
+    ax1_twin.legend(loc='upper right', framealpha=0.9)
+    
+    # Plot 2: Negative news shocks
+    ax2_twin = ax2.twinx()
+    
+    # Bars for negative news
+    ax2.bar(
+        news_weekly.index,
+        news_weekly['negative_count'],
+        width=5,
+        color='#1B9E77',  # Teal for negative (inverted semantic)
+        alpha=0.7,
+        label='Negative News Shocks'
+    )
+    
+    # Line for price/spread
+    ax2_twin.plot(
+        price_weekly.index,
+        price_weekly.values,
+        color='black',
+        linewidth=2,
+        label=f'{price_label} ({price_unit})'
+    )
+    
+    ax2.set_xlabel('Time', fontweight='bold', fontsize=12)
+    ax2.set_ylabel('Number of Negative News Shocks', fontweight='bold', fontsize=12, color='#1B9E77')
+    ax2_twin.set_ylabel(f'{price_label} ({price_unit})', fontweight='bold', fontsize=12)
+    ax2.set_title('Negative News Shocks and Price/Spread', fontweight='bold', fontsize=14)
+    ax2.tick_params(axis='y', labelcolor='#1B9E77')
+    ax2.grid(alpha=0.3, axis='y')
+    ax2.legend(loc='upper left', framealpha=0.9)
+    ax2_twin.legend(loc='upper right', framealpha=0.9)
+    
+    # Format x-axis dates
+    fig.autofmt_xdate()
+    
+    plt.tight_layout()
+    
+    if save_path:
+        _save_figure(fig, save_path)
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+    
+    return news_weekly

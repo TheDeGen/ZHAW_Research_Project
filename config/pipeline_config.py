@@ -133,6 +133,27 @@ HYPOTHESIS_TEMPLATE = "Der Artikel handelt von: {}."
 # Label for articles with no energy relevance (to be excluded from feature engineering)
 OTHER_LABEL = "kein Bezug zu Energie, Wetter oder Finanzmärkten"
 
+# Topic valence mapping for positive/negative news classification
+# Maps topic labels to their sentiment valence based on semantic content
+TOPIC_VALENCE_MAP = {
+    # Negative topics
+    "Regierung, Parlament oder Behörden beschließen strengere Gesetze, Steuern oder Auflagen": -1,
+    "Krieg, Konflikt, Terrorgefahr oder Sanktionen verschärfen die internationale Sicherheitslage": -1,
+    "Rezession, Unternehmenskrise, Bankenturbulenzen oder steigende Zinsen belasten die Wirtschaft": -1,
+    "Öl-, Gas- oder Strommärkte stehen unter Druck oder es kommt zu Versorgungsstörungen": -1,
+    "Störungen, Ausfälle oder Sicherheitslücken bei IT/Technologie verursachen Risiken": -1,
+    "Sportereignisse, Kultur oder Prominenz sorgen für Kontroversen oder Skandale": -1,
+    # Positive topics
+    "Regierung, Parlament oder Behörden lockern Gesetze, Steuern oder Auflagen": 1,
+    "Waffenruhe, Friedensgespräche oder Aufhebung von Sanktionen entspannen die internationale Sicherheitslage": 1,
+    "Konjunkturerholung, starke Unternehmenszahlen oder sinkende Zinsen stützen die Wirtschaft": 1,
+    "Öl-, Gas- oder Strommärkte entspannen sich oder Versorgungslage verbessert sich": 1,
+    "Durchbrüche in Forschung, Medizin oder Technologie bringen Fortschritt und Entlastung": 1,
+    "Sportereignisse, Kultur oder Prominenz sorgen für Erfolge, Preise oder positive Resonanz": 1,
+    # Neutral/Other
+    "kein Bezug zu Energie, Wetter oder Finanzmärkten": 0,
+}
+
 # ============================================================================
 # XGBOOST HYPERPARAMETER DISTRIBUTIONS
 # ============================================================================
