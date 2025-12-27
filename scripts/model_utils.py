@@ -11,8 +11,22 @@ from lightgbm import LGBMClassifier
 from sklearn.model_selection import RandomizedSearchCV, GridSearchCV
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.utils.class_weight import compute_class_weight
+import sklearn
 
 from config import model_config
+
+# Check sklearn version for FrozenEstimator compatibility (sklearn >= 1.4)
+# cv='prefit' was deprecated in 1.6 and removed in 1.8
+def _parse_version(version_string):
+    """Parse version string into tuple of integers for comparison."""
+    # Handle dev versions like "1.4.0.dev0" or "1.6.0.post1"
+    version_parts = version_string.split('.')
+    major = int(version_parts[0])
+    minor = int(version_parts[1].split('+')[0].split('-')[0].split('dev')[0].split('post')[0])
+    return (major, minor)
+
+SKLEARN_VERSION = _parse_version(sklearn.__version__)
+USE_FROZEN_ESTIMATOR = SKLEARN_VERSION >= (1, 4)
 
 
 def sanitize_feature_names(feature_names):
@@ -771,8 +785,77 @@ def calibrate_classifier(
 
     # Calibrate the model
     if cv == 'prefit':
-        calibrated_model = CalibratedClassifierCV(model, method=method, cv='prefit')
-        calibrated_model.fit(X_val, y_val)
+        # Try new API first (sklearn >= 1.4): use FrozenEstimator with cv=None
+        # cv='prefit' was deprecated in 1.6 and removed in 1.8
+        if USE_FROZEN_ESTIMATOR:
+            # Try multiple import locations for FrozenEstimator
+            FrozenEstimator = None
+            for import_path in ['sklearn.utils', 'sklearn.frozen', 'sklearn.base']:
+                try:
+                    FrozenEstimator = __import__(import_path, fromlist=['FrozenEstimator']).FrozenEstimator
+                    break
+                except (ImportError, AttributeError):
+                    continue
+            
+            if FrozenEstimator is not None:
+                try:
+                    calibrated_model = CalibratedClassifierCV(
+                        FrozenEstimator(model), method=method, cv=None
+                    )
+                    calibrated_model.fit(X_val, y_val)
+                except (ValueError, TypeError, AttributeError):
+                    # If FrozenEstimator fails, fall back to legacy API
+                    calibrated_model = CalibratedClassifierCV(model, method=method, cv='prefit')
+                    calibrated_model.fit(X_val, y_val)
+            else:
+                # FrozenEstimator not available, try legacy API
+                calibrated_model = CalibratedClassifierCV(model, method=method, cv='prefit')
+                calibrated_model.fit(X_val, y_val)
+        else:
+            # For older sklearn versions, try legacy API first
+            # If it fails (e.g., newer sklearn that rejects cv='prefit'), try FrozenEstimator
+            try:
+                calibrated_model = CalibratedClassifierCV(model, method=method, cv='prefit')
+                calibrated_model.fit(X_val, y_val)
+            except Exception as e:
+                # If cv='prefit' is rejected during instantiation or validation, try FrozenEstimator
+                # Catches ValueError, TypeError, InvalidParameterError, etc.
+                error_msg = str(e).lower()
+                error_type = type(e).__name__.lower()
+                if ("cv" in error_msg or "prefit" in error_msg or "parameter" in error_msg or 
+                    "invalidparameter" in error_type):
+                    # Try multiple import locations for FrozenEstimator
+                    FrozenEstimator = None
+                    for import_path in ['sklearn.utils', 'sklearn.frozen', 'sklearn.base']:
+                        try:
+                            FrozenEstimator = __import__(import_path, fromlist=['FrozenEstimator']).FrozenEstimator
+                            break
+                        except (ImportError, AttributeError):
+                            continue
+                    
+                    if FrozenEstimator is not None:
+                        try:
+                            calibrated_model = CalibratedClassifierCV(
+                                FrozenEstimator(model), method=method, cv=None
+                            )
+                            calibrated_model.fit(X_val, y_val)
+                        except (ImportError, ValueError, TypeError, AttributeError):
+                            # Both FrozenEstimator and cv='prefit' failed
+                            raise RuntimeError(
+                                f"Calibration failed: sklearn version {sklearn.__version__} does not support "
+                                f"cv='prefit' and FrozenEstimator is not available. "
+                                f"Please install scikit-learn<1.6 (e.g., pip install 'scikit-learn<1.6') "
+                                f"or update to a version with FrozenEstimator support."
+                            ) from e
+                    else:
+                        # FrozenEstimator not available and cv='prefit' rejected
+                        raise RuntimeError(
+                            f"Calibration failed: sklearn version {sklearn.__version__} does not support "
+                            f"cv='prefit' and FrozenEstimator is not available. "
+                            f"Please install scikit-learn<1.6 (e.g., pip install 'scikit-learn<1.6')."
+                        ) from e
+                else:
+                    raise
     else:
         calibrated_model = CalibratedClassifierCV(model, method=method, cv=cv)
         calibrated_model.fit(X_train, y_train)

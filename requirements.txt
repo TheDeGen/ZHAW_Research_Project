@@ -15,7 +15,7 @@ pandas
 psutil
 pyarrow
 nvidia-ml-py
-scikit-learn
+scikit-learn<1.6  # Pin to < 1.6 to support cv='prefit' parameter
 scipy
 seaborn
 sentence-transformers
@@ -23,6 +23,6 @@ shap
 torch
 tqdm
 transformers
-umap-learn
+umap-learn<0.5.9  # Pin to < 0.5.9 for compatibility with scikit-learn < 1.6
 xgboost
 

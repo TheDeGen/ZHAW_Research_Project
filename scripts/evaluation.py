@@ -467,6 +467,7 @@ def run_portfolio_backtest(
     position_pct: float = 0.10,
     fixed_cost_per_mwh: float = 0.50,
     pct_cost: float = 0.0005,
+    spread_column: str | None = "real_spread_abs_shift_24",
 ) -> dict:
     """
     Run portfolio-based backtest simulation.
@@ -483,6 +484,9 @@ def run_portfolio_backtest(
         position_pct: Fraction of portfolio to allocate per trade (e.g., 0.10 = 10%)
         fixed_cost_per_mwh: Fixed transaction cost per MWh in EUR
         pct_cost: Percentage transaction cost as decimal (e.g., 0.0005 = 0.05%)
+        spread_column: Column name for the spread to use for P&L calculation.
+            Defaults to 'real_spread_abs_shift_24' (future spread at t+24).
+            Falls back to computing from current prices if column not found.
     
     Returns:
         dict with keys:
@@ -510,7 +514,13 @@ def run_portfolio_backtest(
     # Extract price series
     spot_series = test_df[spot_col].values
     day_ahead_series = test_df[day_ahead_col].values
-    spread_series = spot_series - day_ahead_series
+    
+    # Use shifted spread column if available, otherwise compute from current prices
+    if spread_column and spread_column in test_df.columns:
+        spread_series = test_df[spread_column].values
+    else:
+        # Fallback to current spread if column not found
+        spread_series = spot_series - day_ahead_series
     
     # Decode predictions if encoder provided
     if label_encoder is not None:
@@ -518,23 +528,16 @@ def run_portfolio_backtest(
     else:
         actions = predictions
     
-    # #region agent log
-    import json; _log_path = "/Users/nicolas/Desktop/Repos/zhaw_arep/.cursor/debug.log"
-    with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v3", "hypothesisId": "H1", "location": "evaluation.py:520", "message": "label_decode_check", "data": {"encoder_classes": label_encoder.classes_.tolist() if label_encoder else None, "pred_sample": predictions[:10].tolist(), "actions_sample": actions[:10].tolist(), "unique_actions": list(map(int, np.unique(actions)))}, "timestamp": __import__("time").time()}) + "\n")
-    # #endregion
+    # Handle NaN values in spread (last 24 periods will have NaN for shifted spread)
+    valid_mask = ~np.isnan(spread_series)
+    n_valid_periods = valid_mask.sum()
     
-    # #region agent log
-    with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v3", "hypothesisId": "H2,H3", "location": "evaluation.py:524", "message": "price_data_check", "data": {"spot_min": float(spot_series.min()), "spot_max": float(spot_series.max()), "day_ahead_min": float(day_ahead_series.min()), "day_ahead_max": float(day_ahead_series.max()), "spread_min": float(spread_series.min()), "spread_max": float(spread_series.max()), "spread_mean": float(spread_series.mean()), "n_negative_day_ahead": int((day_ahead_series <= 0).sum())}, "timestamp": __import__("time").time()}) + "\n")
-    # #endregion
-    
-    # #region agent log
-    _action_counts = {int(k): int(v) for k, v in zip(*np.unique(actions, return_counts=True))}
-    with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v3", "hypothesisId": "H4", "location": "evaluation.py:528", "message": "action_distribution", "data": {"action_counts": _action_counts, "n_long": _action_counts.get(1, 0), "n_short": _action_counts.get(-1, 0), "n_neutral": _action_counts.get(0, 0)}, "timestamp": __import__("time").time()}) + "\n")
-    # #endregion
-    
-    # #region agent log - verify loop will execute
-    with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v3", "hypothesisId": "H6", "location": "evaluation.py:loop_start", "message": "loop_start", "data": {"n_periods": len(test_df), "first_10_actions": actions[:10].tolist()}, "timestamp": __import__("time").time()}) + "\n")
-    # #endregion
+    # Calculate action distribution for reference (only valid periods)
+    if n_valid_periods > 0:
+        valid_actions = actions[valid_mask]
+        _action_counts = {int(k): int(v) for k, v in zip(*np.unique(valid_actions, return_counts=True))}
+    else:
+        _action_counts = {}
     
     # Initialize portfolio tracking
     n_periods = len(test_df)
@@ -545,9 +548,34 @@ def run_portfolio_backtest(
     # Track trade details
     trade_log = []
     
-    # Simulate trading period by period
+    # Simulate trading period by period (skip periods with NaN spread)
     for i in range(n_periods):
         equity_curve[i] = portfolio_value
+        
+        # Skip periods with invalid (NaN) spread values
+        if not valid_mask[i]:
+            # No trade possible - log with NaN spread
+            trade_log.append({
+                'period': i,
+                'action': 0,
+                'spot_price': spot_series[i] if i < len(spot_series) else np.nan,
+                'day_ahead_price': day_ahead_series[i] if i < len(day_ahead_series) else np.nan,
+                'spread': np.nan,
+                'position_value': 0.0,
+                'mwh_traded': 0.0,
+                'gross_pnl': 0.0,
+                'fixed_cost': 0.0,
+                'pct_cost': 0.0,
+                'total_cost': 0.0,
+                'net_pnl': 0.0,
+                'portfolio_value': portfolio_value,
+            })
+            # Calculate period return (%)
+            if i > 0:
+                returns_pct[i] = ((portfolio_value - equity_curve[i-1]) / equity_curve[i-1]) * 100
+            else:
+                returns_pct[i] = 0.0
+            continue
         
         action = actions[i]
         spot_price = spot_series[i]
@@ -585,12 +613,6 @@ def run_portfolio_backtest(
             
             # Net P&L
             net_pnl = gross_pnl - total_cost
-            
-            # #region agent log
-            if i < 10 or (net_pnl < -1000):  # Log first 10 trades and any large losses
-                import json; _log_path = "/Users/nicolas/Desktop/Repos/zhaw_arep/.cursor/debug.log"
-                with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v4", "hypothesisId": "H7", "location": "evaluation.py:pnl_calc", "message": "trade_details", "data": {"period": i, "action": int(action), "spot": float(spot_price), "day_ahead": float(day_ahead_price), "sizing_price": float(sizing_price), "spread": float(spread), "position_value": float(position_value), "mwh_raw": float(mwh_traded_raw), "mwh_traded": float(mwh_traded), "mwh_capped": bool(mwh_traded_raw > max_mwh_per_trade), "cost_per_mwh": float(effective_cost_per_mwh), "total_cost": float(total_cost), "gross_pnl": float(gross_pnl), "net_pnl": float(net_pnl), "portfolio_before": float(equity_curve[i]), "portfolio_after": float(portfolio_value + net_pnl)}, "timestamp": __import__("time").time()}) + "\n")
-            # #endregion
             
             # Update portfolio
             portfolio_value += net_pnl
@@ -693,14 +715,6 @@ def run_portfolio_backtest(
         'Total Trades': n_trades,
         'Total Costs (EUR)': total_costs,
     }
-    
-    # #region agent log
-    import json; _log_path = "/Users/nicolas/Desktop/Repos/zhaw_arep/.cursor/debug.log"
-    _gross_pnls = [t['gross_pnl'] for t in trade_log if t['action'] != 0]
-    _winning_pnls = [p for p in trade_pnls if p > 0]
-    _losing_pnls = [p for p in trade_pnls if p < 0]
-    with open(_log_path, "a") as _f: _f.write(json.dumps({"runId": "post-fix-v3", "hypothesisId": "summary", "location": "evaluation.py:metrics", "message": "backtest_summary", "data": {"initial_capital": initial_capital, "final_value": float(final_value), "total_return_pct": float(total_return_pct), "n_trades": n_trades, "n_wins": n_wins, "win_rate": float(win_rate), "total_costs": float(total_costs), "sum_gross_pnl": float(sum(_gross_pnls)) if _gross_pnls else 0, "sum_net_pnl": float(sum(trade_pnls)) if trade_pnls else 0, "avg_win": float(sum(_winning_pnls)/len(_winning_pnls)) if _winning_pnls else 0, "avg_loss": float(sum(_losing_pnls)/len(_losing_pnls)) if _losing_pnls else 0}, "timestamp": __import__("time").time()}) + "\n")
-    # #endregion
     
     return {
         'equity_curve': equity_curve_series,
