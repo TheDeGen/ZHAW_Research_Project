@@ -465,8 +465,8 @@ def run_portfolio_backtest(
     label_encoder=None,
     initial_capital: float = 100_000.0,
     position_pct: float = 0.10,
-    fixed_cost_per_mwh: float = 0.50,
-    pct_cost: float = 0.0005,
+    fixed_cost_per_mwh: float = 0.06,  # 0.03 EUR/MWh open + 0.03 close
+    pct_cost: float = 0.0,             # No percentage cost (kept for API compatibility)
     spread_column: str | None = "real_spread_abs_shift_24",
 ) -> dict:
     """
@@ -474,7 +474,7 @@ def run_portfolio_backtest(
     
     Simulates trading with a portfolio starting at initial_capital EUR.
     Each trade allocates position_pct of current portfolio value.
-    Returns include transaction costs (fixed per MWh + percentage of trade value).
+    Returns include transaction costs (fixed per MWh traded).
     
     Args:
         test_df: DataFrame with 'Spot Price' and 'Day Ahead Auction' columns
@@ -482,8 +482,8 @@ def run_portfolio_backtest(
         label_encoder: Optional encoder to decode predictions
         initial_capital: Starting portfolio value in EUR
         position_pct: Fraction of portfolio to allocate per trade (e.g., 0.10 = 10%)
-        fixed_cost_per_mwh: Fixed transaction cost per MWh in EUR
-        pct_cost: Percentage transaction cost as decimal (e.g., 0.0005 = 0.05%)
+        fixed_cost_per_mwh: Transaction cost per MWh in EUR (default 0.06 = 0.03 open + 0.03 close)
+        pct_cost: Percentage transaction cost (deprecated, kept for API compatibility)
         spread_column: Column name for the spread to use for P&L calculation.
             Defaults to 'real_spread_abs_shift_24' (future spread at t+24).
             Falls back to computing from current prices if column not found.
@@ -583,9 +583,9 @@ def run_portfolio_backtest(
         spread = spread_series[i]
         
         if action != 0:  # Trade signal
-            # Calculate position size - use INITIAL capital to prevent compounding explosion
-            # This models realistic fixed-size trading rather than exponential scaling
-            position_value = initial_capital * position_pct
+            # Calculate position size as percentage of CURRENT portfolio value
+            # This ensures proper risk management: positions scale down with losses
+            position_value = portfolio_value * position_pct
             
             # Calculate MWh traded
             # Use day_ahead_price as reference for position sizing
@@ -603,19 +603,14 @@ def run_portfolio_backtest(
             # Action -1 (Short): profit when spread < 0 (spot < day_ahead)
             gross_pnl = mwh_traded * spread * action
             
-            # Calculate transaction costs
-            # Ensure minimum cost of 0.015 EUR/MWh traded
-            min_cost_per_mwh = 0.015
-            effective_cost_per_mwh = max(fixed_cost_per_mwh, min_cost_per_mwh)
-            fixed_cost = mwh_traded * effective_cost_per_mwh
-            pct_cost_amount = position_value * pct_cost
-            total_cost = fixed_cost + pct_cost_amount
+            # Transaction cost: fixed EUR/MWh (default 0.06 = 0.03 open + 0.03 close)
+            total_cost = mwh_traded * fixed_cost_per_mwh
             
             # Net P&L
             net_pnl = gross_pnl - total_cost
-            
-            # Update portfolio
-            portfolio_value += net_pnl
+
+            # Update portfolio (floor at zero to prevent impossible negative values)
+            portfolio_value = max(portfolio_value + net_pnl, 0)
             
             # Log trade details
             trade_log.append({
@@ -627,9 +622,9 @@ def run_portfolio_backtest(
                 'position_value': position_value,
                 'mwh_traded': mwh_traded,
                 'gross_pnl': gross_pnl,
-                'cost_per_mwh': effective_cost_per_mwh,
-                'fixed_cost': fixed_cost,
-                'pct_cost': pct_cost_amount,
+                'cost_per_mwh': fixed_cost_per_mwh,
+                'fixed_cost': total_cost,
+                'pct_cost': 0.0,
                 'total_cost': total_cost,
                 'net_pnl': net_pnl,
                 'portfolio_value': portfolio_value,
