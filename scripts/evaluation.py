@@ -572,7 +572,7 @@ def run_portfolio_backtest(
             })
             # Calculate period return (%)
             if i > 0:
-                returns_pct[i] = ((portfolio_value - equity_curve[i-1]) / equity_curve[i-1]) * 100
+                returns_pct[i] = ((portfolio_value - equity_curve[i]) / equity_curve[i]) * 100
             else:
                 returns_pct[i] = 0.0
             continue
@@ -649,7 +649,7 @@ def run_portfolio_backtest(
         
         # Calculate period return (%)
         if i > 0:
-            returns_pct[i] = ((portfolio_value - equity_curve[i-1]) / equity_curve[i-1]) * 100
+            returns_pct[i] = ((portfolio_value - equity_curve[i]) / equity_curve[i]) * 100
         else:
             returns_pct[i] = 0.0
     

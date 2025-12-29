@@ -202,7 +202,20 @@ MIN_TIMESTAMP = "2023-01-01"
 
 # Standard figure size for all plots (width, height in inches)
 DEFAULT_FIGSIZE = (12, 8)
-DEFAULT_DPI = 150
+DEFAULT_FIGSIZE_WIDE = (14, 8)  # For plots with long labels
+DEFAULT_FIGSIZE_TALL = (12, 10)  # For plots with many rows
+DEFAULT_DPI = 200  # Publication quality
+
+# Font sizes for consistent styling
+VIZ_TITLE_FONTSIZE = 14
+VIZ_LABEL_FONTSIZE = 12
+VIZ_TICK_FONTSIZE = 10
+VIZ_LEGEND_FONTSIZE = 9
+VIZ_ANNOTATION_FONTSIZE = 9
+
+# Label truncation lengths
+VIZ_LABEL_MAX_CHARS = 45  # Standard truncation length for y-axis labels
+VIZ_LABEL_MAX_CHARS_SHORT = 35  # Shorter truncation for cramped spaces
 
 # ColorBrewer Dark2 palette (colorblind-safe)
 # Reference: https://colorbrewer2.org/#type=qualitative&scheme=Dark2&n=8
