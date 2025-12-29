@@ -15,7 +15,6 @@ from sentence_transformers import SentenceTransformer
 from sklearn.linear_model import RidgeClassifierCV
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score, f1_score
-from sklearn.preprocessing import StandardScaler
 from joblib import Parallel, delayed
 
 from . import device_utils
@@ -1214,64 +1213,6 @@ def assemble_time_decay_datasets(
     return preprocessed_datasets
 
 
-def scale_preprocessed_datasets(
-    preprocessed_datasets: dict[tuple[int, float], dict[str, pd.DataFrame | list[str] | str]],
-    scaler_factory=StandardScaler,
-    suffix: str = "_scaled",
-) -> dict[tuple[int, float], dict[str, pd.DataFrame | list[str] | str]]:
-    """
-    Standardise news-derived features for each dataset split and record scaler metadata.
-
-    Args:
-        preprocessed_datasets: Datasets produced by assemble_time_decay_datasets.
-        scaler_factory: Callable returning a fitted scaler (defaults to sklearn StandardScaler).
-        suffix: Suffix appended to scaled news feature names.
-
-    Returns:
-        Updated preprocessed_datasets with scaled feature columns and scaler references.
-    """
-    for params_key, data_dict in preprocessed_datasets.items():
-        news_features = data_dict.get("news_features", [])
-        if not news_features:
-            data_dict["scaled_news_features"] = []
-            data_dict["scaler_news"] = None
-            continue
-
-        scaler = scaler_factory()
-        train_df = data_dict["train_df"].copy()
-        val_df = data_dict["val_df"].copy()
-        test_df = data_dict["test_df"].copy()
-
-        train_values = train_df[news_features].fillna(0.0).to_numpy(dtype=np.float32, copy=True)
-        scaler.fit(train_values)
-
-        scaled_feature_names = [f"{feature}{suffix}" for feature in news_features]
-
-        def _apply_scaler(frame: pd.DataFrame) -> pd.DataFrame:
-            values = frame[news_features].fillna(0.0).to_numpy(dtype=np.float32, copy=True)
-            transformed = scaler.transform(values)
-            transformed_df = pd.DataFrame(
-                transformed,
-                index=frame.index,
-                columns=scaled_feature_names,
-            )
-            updated = frame.copy()
-            # Drop existing scaled columns if function is invoked multiple times
-            for col in scaled_feature_names:
-                if col in updated.columns:
-                    updated = updated.drop(columns=[col])
-            updated[scaled_feature_names] = transformed_df
-            return updated
-
-        data_dict["train_df"] = _apply_scaler(train_df)
-        data_dict["val_df"] = _apply_scaler(val_df)
-        data_dict["test_df"] = _apply_scaler(test_df)
-        data_dict["scaled_news_features"] = scaled_feature_names
-        data_dict["scaler_news"] = scaler
-
-    return preprocessed_datasets
-
-
 def evaluate_single_parameter_combination(
     params_key,
     data_dict,
@@ -1285,7 +1226,7 @@ def evaluate_single_parameter_combination(
 
     Args:
         params_key: Tuple of (lookback_window, decay_lambda)
-        data_dict: Dictionary containing train_df, val_df, scaled_news_features
+        data_dict: Dictionary containing train_df, val_df, news_features
         baseline_features: List of baseline feature names
         target_column: Name of target column
         alphas: Ridge regression alphas to try
@@ -1300,9 +1241,9 @@ def evaluate_single_parameter_combination(
     dataset_name = data_dict['dataset_name']
     train_df = data_dict['train_df']
     val_df = data_dict['val_df']
-    scaled_news_features = data_dict['scaled_news_features']
+    news_features = data_dict['news_features']
 
-    feature_columns = baseline_features + scaled_news_features
+    feature_columns = baseline_features + news_features
     missing_features = [col for col in feature_columns if col not in train_df.columns]
     if missing_features:
         raise ValueError(f"Missing features {missing_features} in dataset {dataset_name}")

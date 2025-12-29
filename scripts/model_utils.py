@@ -255,7 +255,7 @@ def run_xgb_random_search(
     GPU-aware XGBoost random search wrapper.
 
     Args:
-        data_dict: Dictionary containing train_df and scaled_news_features
+        data_dict: Dictionary containing train_df and news_features
         baseline_features: List of baseline feature names
         target_column: Name of target column
         param_distributions: Parameter distributions for random search
@@ -296,8 +296,8 @@ def run_xgb_random_search(
 
     train_df = data_dict['train_df']
     val_df = data_dict.get('val_df')
-    scaled_news_features = data_dict['scaled_news_features']
-    feature_columns = baseline_features + scaled_news_features
+    news_features = data_dict['news_features']
+    feature_columns = baseline_features + news_features
     missing_features = [col for col in feature_columns if col not in train_df.columns]
     if missing_features:
         raise KeyError(f"Missing features in training dataframe: {missing_features}")
@@ -370,7 +370,9 @@ def run_xgb_random_search(
 
     class_counts = np.bincount(y_train, minlength=num_classes)
     class_counts[class_counts == 0] = 1
-    class_weights = (len(y_train) / (num_classes * class_counts))
+    # Use squared inverse frequency for more aggressive minority class weighting
+    # This helps XGBoost produce predictions for severely underrepresented classes
+    class_weights = (len(y_train) / (num_classes * class_counts)) ** 2
     sample_weights = class_weights[y_train]
 
     # Prepare fit parameters for early stopping
@@ -1002,7 +1004,7 @@ def train_xgb_candidates(
         data_dict = {
             "train_df": dataset["train_df"],
             "val_df": dataset["val_df"],  # Add validation set for early stopping
-            "scaled_news_features": dataset["scaled_news_features"],
+            "news_features": dataset["news_features"],
         }
 
         # Run XGBoost random search

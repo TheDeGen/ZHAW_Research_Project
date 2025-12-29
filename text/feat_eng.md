@@ -179,12 +179,6 @@ The complete feature matrix integrates baseline features with news-derived featu
 
 The news-derived features (34 dimensions) constitute approximately 72% of the total feature space, reflecting the research focus on extracting predictive signal from textual information.
 
-**Standardisation.** News-derived features exhibit different scales and distributions compared to baseline features. To prevent scale-dependent biases in model training, StandardScaler normalisation is applied to the news features:
-
-$$x_{\text{scaled}} = \frac{x - \mu}{\sigma}$$
-
-where $\mu$ and $\sigma$ are the mean and standard deviation computed from the training set. Critically, scaling parameters are fitted exclusively on training data and subsequently applied to validation and test sets, preventing information leakage from future observations into the feature normalisation.
-
 **Temporal Split Strategy.** The dataset is partitioned chronologically to preserve the temporal ordering essential for time-series forecasting:
 - **Training Set**: First 70% of observations
 - **Validation Set**: Next 20% of observations
