@@ -468,14 +468,15 @@ def run_portfolio_backtest(
     fixed_cost_per_mwh: float = 0.06,  # 0.03 EUR/MWh open + 0.03 close
     pct_cost: float = 0.0,             # No percentage cost (kept for API compatibility)
     spread_column: str | None = "real_spread_abs_shift_24",
+    max_position_return_pct: float = 0.10,  # Max return per trade as % of POSITION value (default 10%)
 ) -> dict:
     """
     Run portfolio-based backtest simulation.
-    
+
     Simulates trading with a portfolio starting at initial_capital EUR.
     Each trade allocates position_pct of current portfolio value.
     Returns include transaction costs (fixed per MWh traded).
-    
+
     Args:
         test_df: DataFrame with 'Spot Price' and 'Day Ahead Auction' columns
         predictions: Model predictions (encoded or decoded)
@@ -487,7 +488,11 @@ def run_portfolio_backtest(
         spread_column: Column name for the spread to use for P&L calculation.
             Defaults to 'real_spread_abs_shift_24' (future spread at t+24).
             Falls back to computing from current prices if column not found.
-    
+        max_position_return_pct: Maximum return per trade as fraction of POSITION value (default 0.10 = 10%).
+            With 10% position sizing, this caps portfolio impact at 1% per trade.
+            This models realistic market impact limits and prevents extreme spreads from
+            causing unrealistic returns. Set to None or 1.0 to disable capping.
+
     Returns:
         dict with keys:
         - 'equity_curve': pd.Series of portfolio values over time
@@ -601,11 +606,19 @@ def run_portfolio_backtest(
             # Calculate gross P&L
             # Action +1 (Long): profit when spread > 0 (spot > day_ahead)
             # Action -1 (Short): profit when spread < 0 (spot < day_ahead)
-            gross_pnl = mwh_traded * spread * action
-            
+            gross_pnl_uncapped = mwh_traded * spread * action
+
+            # Cap P&L relative to POSITION value (not portfolio) to model realistic limits
+            # With 10% position sizing and 10% position return cap, max portfolio impact = 1%
+            if max_position_return_pct is not None and max_position_return_pct < 1.0:
+                max_pnl_abs = position_value * max_position_return_pct
+                gross_pnl = np.clip(gross_pnl_uncapped, -max_pnl_abs, max_pnl_abs)
+            else:
+                gross_pnl = gross_pnl_uncapped
+
             # Transaction cost: fixed EUR/MWh (default 0.06 = 0.03 open + 0.03 close)
             total_cost = mwh_traded * fixed_cost_per_mwh
-            
+
             # Net P&L
             net_pnl = gross_pnl - total_cost
 
@@ -621,7 +634,9 @@ def run_portfolio_backtest(
                 'spread': spread,
                 'position_value': position_value,
                 'mwh_traded': mwh_traded,
+                'gross_pnl_uncapped': gross_pnl_uncapped,
                 'gross_pnl': gross_pnl,
+                'pnl_was_capped': gross_pnl != gross_pnl_uncapped,
                 'cost_per_mwh': fixed_cost_per_mwh,
                 'fixed_cost': total_cost,
                 'pct_cost': 0.0,
@@ -698,7 +713,10 @@ def run_portfolio_backtest(
     
     # Total costs
     total_costs = sum(t['total_cost'] for t in trade_log)
-    
+
+    # Count capped trades (if pnl_was_capped field exists)
+    n_capped = sum(1 for t in trade_log if t.get('pnl_was_capped', False))
+
     metrics = {
         'Final Value (EUR)': final_value,
         'Total Return (%)': total_return_pct,
@@ -708,6 +726,7 @@ def run_portfolio_backtest(
         'Max Drawdown (%)': max_drawdown_pct,
         'Win Rate (%)': win_rate,
         'Total Trades': n_trades,
+        'Trades Capped': n_capped,
         'Total Costs (EUR)': total_costs,
     }
     
