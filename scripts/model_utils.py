@@ -1111,13 +1111,112 @@ def train_xgb_candidates(
     }
 
 
+def predict_with_neutral_threshold(
+    model,
+    X: pd.DataFrame | np.ndarray,
+    neutral_class_idx: int = 1,
+    threshold: float = 0.25
+) -> np.ndarray:
+    """
+    Predict with lowered threshold for neutral class.
+    
+    Instead of using argmax (which never predicts neutral), this function
+    applies a threshold: if the neutral class probability exceeds the threshold,
+    predict neutral regardless of other class probabilities.
+    
+    Args:
+        model: Fitted model with predict_proba method
+        X: Feature matrix
+        neutral_class_idx: Index of neutral class in encoded labels (default: 1)
+        threshold: Probability threshold for neutral class (default: 0.25)
+    
+    Returns:
+        Array of predicted class indices
+    """
+    proba = model.predict_proba(X)
+    preds = np.argmax(proba, axis=1)
+    
+    # Override to neutral if neutral prob exceeds threshold
+    neutral_mask = proba[:, neutral_class_idx] >= threshold
+    preds[neutral_mask] = neutral_class_idx
+    
+    return preds
+
+
+def tune_neutral_threshold(
+    model,
+    X_val: pd.DataFrame | np.ndarray,
+    y_val: np.ndarray,
+    neutral_class_idx: int = 1,
+    threshold_range: tuple = (0.1, 0.5),
+    n_thresholds: int = 20
+) -> dict:
+    """
+    Find optimal neutral threshold via grid search on validation set.
+    
+    Tests multiple threshold values and selects the one that maximizes
+    macro-F1 score on the validation set.
+    
+    Args:
+        model: Fitted model with predict_proba method
+        X_val: Validation feature matrix
+        y_val: Validation labels (encoded)
+        neutral_class_idx: Index of neutral class in encoded labels (default: 1)
+        threshold_range: (min, max) threshold range to search
+        n_thresholds: Number of threshold values to test
+    
+    Returns:
+        Dictionary containing:
+            - 'best_threshold': Optimal threshold value
+            - 'best_f1': Best macro-F1 score achieved
+            - 'thresholds': List of tested thresholds
+            - 'f1_scores': List of F1 scores for each threshold
+    """
+    from sklearn.metrics import f1_score
+    
+    thresholds = np.linspace(threshold_range[0], threshold_range[1], n_thresholds)
+    f1_scores = []
+    
+    # Compute probabilities once
+    proba = model.predict_proba(X_val)
+    
+    for thresh in thresholds:
+        # Apply threshold logic directly to avoid redundant predict_proba calls
+        preds = np.argmax(proba, axis=1)
+        neutral_mask = proba[:, neutral_class_idx] >= thresh
+        preds[neutral_mask] = neutral_class_idx
+        
+        f1 = f1_score(y_val, preds, average="macro", zero_division=0)
+        f1_scores.append(f1)
+    
+    best_idx = np.argmax(f1_scores)
+    best_threshold = thresholds[best_idx]
+    best_f1 = f1_scores[best_idx]
+    
+    print(f"\n{'='*70}")
+    print(f"NEUTRAL THRESHOLD TUNING")
+    print(f"{'='*70}")
+    print(f"  Tested {n_thresholds} thresholds from {threshold_range[0]:.2f} to {threshold_range[1]:.2f}")
+    print(f"  Best threshold: {best_threshold:.3f}")
+    print(f"  Best macro-F1: {best_f1:.4f}")
+    print(f"{'='*70}\n")
+    
+    return {
+        'best_threshold': best_threshold,
+        'best_f1': best_f1,
+        'thresholds': thresholds.tolist(),
+        'f1_scores': f1_scores,
+    }
+
+
 def evaluate_xgb_test_set(
     model,
     test_df: pd.DataFrame,
     feature_columns: list,
     target_column: str,
     label_encoder,
-    model_name: str = "XGBoost"
+    model_name: str = "XGBoost",
+    neutral_threshold: float | None = None
 ) -> dict:
     """
     Evaluate XGBoost model on test set and return predictions and metrics.
@@ -1129,6 +1228,8 @@ def evaluate_xgb_test_set(
         target_column: Name of target column
         label_encoder: Label encoder for target classes
         model_name: Name for display purposes
+        neutral_threshold: Optional threshold for neutral class prediction.
+                          If None, uses argmax. If provided, uses threshold-based prediction.
 
     Returns:
         Dictionary containing:
@@ -1138,6 +1239,7 @@ def evaluate_xgb_test_set(
             - 'X_test': Test feature matrix
             - 'accuracy': Test accuracy
             - 'macro_f1': Test macro F1 score
+            - 'neutral_threshold': Threshold used (None if argmax)
     """
     from sklearn.metrics import accuracy_score, f1_score
 
@@ -1146,20 +1248,40 @@ def evaluate_xgb_test_set(
     y_test = label_encoder.transform(y_test_raw)
 
     y_pred_proba = model.predict_proba(X_test)
-    y_pred = np.argmax(y_pred_proba, axis=1)
+    
+    # Determine neutral class index from label encoder
+    # Label encoder maps {-1, 0, 1} to {0, 1, 2}, so neutral (0) is at index 1
+    neutral_class_idx = None
+    for i, class_label in enumerate(label_encoder.classes_):
+        if class_label == 0:
+            neutral_class_idx = i
+            break
+    
+    if neutral_class_idx is None:
+        raise ValueError("Could not find neutral class (0) in label encoder classes")
+    
+    # Use threshold-based prediction if threshold provided, otherwise argmax
+    if neutral_threshold is not None:
+        y_pred = predict_with_neutral_threshold(
+            model, X_test, neutral_class_idx=neutral_class_idx, threshold=neutral_threshold
+        )
+        prediction_method = f"threshold={neutral_threshold:.3f}"
+    else:
+        y_pred = np.argmax(y_pred_proba, axis=1)
+        prediction_method = "argmax"
 
     accuracy = accuracy_score(y_test, y_pred)
     macro_f1 = f1_score(y_test, y_pred, average="macro", zero_division=0)
 
     print(f"\n✓ {model_name} Test Evaluation (3-class)")
-    print(f"  Argmax predictions → Acc={accuracy:.4f}, Macro-F1={macro_f1:.4f}")
+    print(f"  {prediction_method} predictions → Acc={accuracy:.4f}, Macro-F1={macro_f1:.4f}")
 
     # Display detailed class-wise metrics
     print_class_wise_metrics(
         y_true=y_test,
         y_pred=y_pred,
         label_encoder=label_encoder,
-        dataset_name=f"{model_name} Test Set"
+        dataset_name=f"{model_name} Test Set ({prediction_method})"
     )
 
     return {
@@ -1169,6 +1291,7 @@ def evaluate_xgb_test_set(
         "X_test": X_test,
         "accuracy": accuracy,
         "macro_f1": macro_f1,
+        "neutral_threshold": neutral_threshold,
     }
 
 
