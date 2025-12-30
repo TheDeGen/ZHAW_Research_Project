@@ -78,31 +78,47 @@ ZEROSHOT_MODEL = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
 
 HIERARCHICAL_TOPIC_GROUPS = {
     "Nachfrage (Stromverbrauch)": [
-        "Steigender Stromverbrauch durch Wirtschaft, Industrie oder Extremwetter erhöht die Nachfrage",
-        "Sinkender Stromverbrauch durch Konjunkturschwäche oder mildes Wetter senkt die Nachfrage",
+        "Steigender Stromverbrauch durch Wirtschaft, Industrie oder Extremwetter",
+        "Sinkender Stromverbrauch durch Konjunkturschwäche oder mildes Wetter",
     ],
     "Angebot (Erzeugung & Infrastruktur)": [
-        "Ausfälle von Kraftwerken, Netzengpässe oder geringe erneuerbare Einspeisung reduzieren das Angebot",
-        "Hohe erneuerbare Einspeisung, neue Kapazitäten oder stabile Netze erhöhen das Angebot",
-    ],
-    "Wirtschaft, Unternehmen & Finanzen": [
-        "Hohe Zinsen, Rezession, Unternehmenskrise oder steigende Zinsen belasten Energiemärkte",
-        "Sinkende Zinsen, Konjunkturerholung, starke Unternehmenszahlen oder sinkende Zinsen stabilisieren Energiemärkte",
-    ],
-    "Internationale Beziehungen & Sicherheit": [
-        "Krieg, Konflikt, Terrorgefahr oder Sanktionen erhöhen Risiken für Energieversorgung",
-        "Waffenruhe, Friedensgespräche oder Aufhebung von Sanktionen senken Versorgungsrisiken",
+        "Kraftwerksausfälle, Netzengpässe oder geringe erneuerbare Einspeisung",
+        "Hohe erneuerbare Einspeisung, neue Kapazitäten oder stabile Netze",
     ],
     "Brennstoffpreise": [
-        "Steigende Gas-, Kohle- oder CO₂-Preise erhöhen die Stromerzeugungskosten",
-        "Fallende Gas-, Kohle- oder CO₂-Preise senken die Stromerzeugungskosten",
+        "Steigende Gas-, Kohle- oder CO₂-Preise",
+        "Fallende Gas-, Kohle- oder CO₂-Preise",
     ],
     "Wetter": [
-        "Kaltes, windarmes oder bewölktes Wetter erhöht Preisdruck am Strommarkt",
-        "Mildes Wetter, starke Winde oder viel Sonneneinstrahlung entlasten den Strommarkt",
+        "Kaltes, windarmes oder bewölktes Wetter",
+        "Mildes Wetter, starke Winde oder viel Sonneneinstrahlung",
+    ],
+    "Wirtschaft & Konjunktur": [
+        "Positive Wirtschaftsentwicklung, steigende Industrieproduktion oder Unternehmenswachstum",
+        "Rezession, Unternehmenskrise oder sinkende Industrieproduktion",
+    ],
+    "Finanzmärkte & Geldpolitik": [
+        "Zinsentscheidungen, Inflation oder Währungsschwankungen",
+        "Börsennachrichten, Unternehmensgewinne oder Investitionen",
+    ],
+    "Handel & Außenwirtschaft": [
+        "Zölle, Handelskonflikte oder Exportbeschränkungen",
+        "Handelsabkommen, Marktöffnung oder Lieferkettenentwicklung",
+    ],
+    "Geopolitik & Konflikte": [
+        "Krieg, Sanktionen, Terrorgefahr oder geopolitische Spannungen",
+        "Friedensgespräche, Diplomatie oder Aufhebung von Sanktionen",
+    ],
+    "Technologie & Industrie": [
+        "Technologieentwicklung, Halbleiter, Elektromobilität oder Batterieproduktion",
+        "Industriepolitik, Produktionsstandorte oder Unternehmensstrategien",
+    ],
+    "Politik & Regulierung": [
+        "Energiepolitik, Klimagesetze oder EU-Regulierung",
+        "Innenpolitik, Regierungsbildung oder Wahlen",
     ],
     "Sonstiges": [
-        "kein Bezug zu Energie, Wetter oder Finanzmärkten",
+        "Sport, Unterhaltung, Kultur oder Lokalnachrichten ohne Wirtschaftsbezug",
     ],
 }
 
@@ -115,15 +131,19 @@ HIERARCHICAL_ROUTING_SETTINGS = {
     "stage_order": [
         "Nachfrage (Stromverbrauch)",
         "Angebot (Erzeugung & Infrastruktur)",
-        "Wirtschaft, Unternehmen & Finanzen",
-        "Internationale Beziehungen & Sicherheit",
         "Brennstoffpreise",
         "Wetter",
+        "Wirtschaft & Konjunktur",
+        "Finanzmärkte & Geldpolitik",
+        "Handel & Außenwirtschaft",
+        "Geopolitik & Konflikte",
+        "Technologie & Industrie",
+        "Politik & Regulierung",
         "Sonstiges",
     ],
     "stage_thresholds": {
-        "stage1": 0.35,
-        "stage2": 0.25,
+        "stage1": 0.25,  # Lowered from 0.35
+        "stage2": 0.20,  # Lowered from 0.25
     },
     "allow_fallback_to_other": True,
 }
@@ -131,27 +151,35 @@ HIERARCHICAL_ROUTING_SETTINGS = {
 HYPOTHESIS_TEMPLATE = "Der Artikel handelt von: {}."
 
 # Label for articles with no energy relevance (to be excluded from feature engineering)
-OTHER_LABEL = "kein Bezug zu Energie, Wetter oder Finanzmärkten"
+OTHER_LABEL = "Sport, Unterhaltung, Kultur oder Lokalnachrichten ohne Wirtschaftsbezug"
 
 # Topic valence mapping for positive/negative news classification
 # Maps topic labels to their sentiment valence based on semantic content
 TOPIC_VALENCE_MAP = {
     # Negative topics (price increasing)
-    "Steigender Stromverbrauch durch Wirtschaft, Industrie oder Extremwetter erhöht die Nachfrage": -1,
-    "Ausfälle von Kraftwerken, Netzengpässe oder geringe erneuerbare Einspeisung reduzieren das Angebot": -1,
-    "Hohe Zinsen, Rezession, Unternehmenskrise oder steigende Zinsen belasten Energiemärkte": -1,
-    "Krieg, Konflikt, Terrorgefahr oder Sanktionen erhöhen Risiken für Energieversorgung": -1,
-    "Steigende Gas-, Kohle- oder CO₂-Preise erhöhen die Stromerzeugungskosten": -1,
-    "Kaltes, windarmes oder bewölktes Wetter erhöht Preisdruck am Strommarkt": -1,
+    "Steigender Stromverbrauch durch Wirtschaft, Industrie oder Extremwetter": -1,
+    "Kraftwerksausfälle, Netzengpässe oder geringe erneuerbare Einspeisung": -1,
+    "Steigende Gas-, Kohle- oder CO₂-Preise": -1,
+    "Kaltes, windarmes oder bewölktes Wetter": -1,
+    "Rezession, Unternehmenskrise oder sinkende Industrieproduktion": -1,
+    "Zinsentscheidungen, Inflation oder Währungsschwankungen": -1,
+    "Zölle, Handelskonflikte oder Exportbeschränkungen": -1,
+    "Krieg, Sanktionen, Terrorgefahr oder geopolitische Spannungen": -1,
     # Positive topics (price decreasing)
-    "Sinkender Stromverbrauch durch Konjunkturschwäche oder mildes Wetter senkt die Nachfrage": 1,
-    "Hohe erneuerbare Einspeisung, neue Kapazitäten oder stabile Netze erhöhen das Angebot": 1,
-    "Sinkende Zinsen, Konjunkturerholung, starke Unternehmenszahlen oder sinkende Zinsen stabilisieren Energiemärkte": 1,
-    "Waffenruhe, Friedensgespräche oder Aufhebung von Sanktionen senken Versorgungsrisiken": 1,
-    "Fallende Gas-, Kohle- oder CO₂-Preise senken die Stromerzeugungskosten": 1,
-    "Mildes Wetter, starke Winde oder viel Sonneneinstrahlung entlasten den Strommarkt": 1,
-    # Neutral/Other
-    "kein Bezug zu Energie, Wetter oder Finanzmärkten": 0,
+    "Sinkender Stromverbrauch durch Konjunkturschwäche oder mildes Wetter": 1,
+    "Hohe erneuerbare Einspeisung, neue Kapazitäten oder stabile Netze": 1,
+    "Fallende Gas-, Kohle- oder CO₂-Preise": 1,
+    "Mildes Wetter, starke Winde oder viel Sonneneinstrahlung": 1,
+    "Positive Wirtschaftsentwicklung, steigende Industrieproduktion oder Unternehmenswachstum": 1,
+    "Börsennachrichten, Unternehmensgewinne oder Investitionen": 1,
+    "Handelsabkommen, Marktöffnung oder Lieferkettenentwicklung": 1,
+    "Friedensgespräche, Diplomatie oder Aufhebung von Sanktionen": 1,
+    # Neutral topics
+    "Technologieentwicklung, Halbleiter, Elektromobilität oder Batterieproduktion": 0,
+    "Industriepolitik, Produktionsstandorte oder Unternehmensstrategien": 0,
+    "Energiepolitik, Klimagesetze oder EU-Regulierung": 0,
+    "Innenpolitik, Regierungsbildung oder Wahlen": 0,
+    "Sport, Unterhaltung, Kultur oder Lokalnachrichten ohne Wirtschaftsbezug": 0,
 }
 
 # ============================================================================

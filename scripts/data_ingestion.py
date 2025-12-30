@@ -6,7 +6,45 @@ Functions for loading and preprocessing news and energy data.
 
 import pandas as pd
 import numpy as np
+import re
 from pathlib import Path
+
+
+def clean_news_text(text: str | None) -> str | None:
+    """
+    Clean news text by removing formatting characters that interfere with classification.
+    
+    Removes:
+    - Straight double quotes (")
+    - Asterisk formatting patterns (*** ... ***)
+    - Leading/trailing asterisk sequences
+    Normalizes whitespace.
+    
+    Args:
+        text: Input text string (can be None/NaN)
+        
+    Returns:
+        Cleaned text string, or None if input is None/NaN (preserves NaN values)
+    """
+    if pd.isna(text) or text is None:
+        return None
+    
+    if not isinstance(text, str):
+        text = str(text)
+    
+    # Remove all straight double quotes
+    text = text.replace('"', '')
+    
+    # Remove asterisk formatting patterns like *** ... ***
+    text = re.sub(r'\*{3,}.*?\*{3,}\s*', '', text)
+    
+    # Remove leading/trailing asterisk sequences
+    text = re.sub(r'^\*+\s*|\s*\*+$', '', text)
+    
+    # Normalize whitespace: replace multiple spaces with single space, then strip
+    text = re.sub(r'\s+', ' ', text).strip()
+    
+    return text
 
 
 def run_ingestion_stage(
@@ -17,6 +55,7 @@ def run_ingestion_stage(
     forecast_horizon: int = 24,
     spread_deadband: float = 5.0,
     random_state: int = 42,
+    clean_text: bool = True,
 ):
     """
     Load and preprocess news and energy data.
@@ -29,6 +68,7 @@ def run_ingestion_stage(
         forecast_horizon: Hours ahead to predict (default: 24)
         spread_deadband: EUR/MWh band for neutral class (default: 5.0)
         random_state: Random seed for sampling
+        clean_text: Whether to clean text by removing quotes and asterisk patterns (default: True)
 
     Returns:
         dict containing:
@@ -46,6 +86,15 @@ def run_ingestion_stage(
     news_df['publishedAt'] = pd.to_datetime(news_df['publishedAt'])
     news_df['publishedAt'] = news_df['publishedAt'].dt.tz_localize(None)
     news_df = news_df.set_index('publishedAt').sort_index()
+
+    # Clean text columns if enabled
+    if clean_text:
+        news_df['title'] = news_df['title'].apply(
+            lambda x: clean_news_text(x) if pd.notna(x) else x
+        )
+        news_df['description'] = news_df['description'].apply(
+            lambda x: clean_news_text(x) if pd.notna(x) else x
+        )
 
     if min_timestamp:
         news_df = news_df[news_df.index >= min_timestamp]

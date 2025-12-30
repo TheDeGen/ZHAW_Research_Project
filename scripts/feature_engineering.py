@@ -335,7 +335,7 @@ def run_embedding_stage(
     news_df['classification_stage1_score'] = title_results['stage1_scores']
 
     # Re-classify "other" using description
-    other_label = candidate_labels[-1]  # "kein Bezug zu Energie, Wetter oder Finanzmärkten"
+    other_label = candidate_labels[-1]  # Last label from HIERARCHICAL_TOPIC_GROUPS (typically "Sonstiges")
     other_mask = news_df['classification'] == other_label
     num_other = other_mask.sum()
 
