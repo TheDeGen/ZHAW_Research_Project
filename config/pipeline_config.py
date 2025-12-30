@@ -77,29 +77,29 @@ EMBEDDING_DIM = 384
 ZEROSHOT_MODEL = "MoritzLaurer/mDeBERTa-v3-base-xnli-multilingual-nli-2mil7"
 
 HIERARCHICAL_TOPIC_GROUPS = {
-    "Politik & öffentliche Ordnung": [
-        "Regierung, Parlament oder Behörden beschließen strengere Gesetze, Steuern oder Auflagen",
-        "Regierung, Parlament oder Behörden lockern Gesetze, Steuern oder Auflagen",
+    "Nachfrage (Stromverbrauch)": [
+        "Steigender Stromverbrauch durch Wirtschaft, Industrie oder Extremwetter erhöht die Nachfrage",
+        "Sinkender Stromverbrauch durch Konjunkturschwäche oder mildes Wetter senkt die Nachfrage",
     ],
-    "Internationale Beziehungen & Sicherheit": [
-        "Krieg, Konflikt, Terrorgefahr oder Sanktionen verschärfen die internationale Sicherheitslage",
-        "Waffenruhe, Friedensgespräche oder Aufhebung von Sanktionen entspannen die internationale Sicherheitslage",
+    "Angebot (Erzeugung & Infrastruktur)": [
+        "Ausfälle von Kraftwerken, Netzengpässe oder geringe erneuerbare Einspeisung reduzieren das Angebot",
+        "Hohe erneuerbare Einspeisung, neue Kapazitäten oder stabile Netze erhöhen das Angebot",
     ],
     "Wirtschaft, Unternehmen & Finanzen": [
-        "Rezession, Unternehmenskrise, Bankenturbulenzen oder steigende Zinsen belasten die Wirtschaft",
-        "Konjunkturerholung, starke Unternehmenszahlen oder sinkende Zinsen stützen die Wirtschaft",
+        "Hohe Zinsen, Rezession, Unternehmenskrise oder steigende Zinsen belasten Energiemärkte",
+        "Sinkende Zinsen, Konjunkturerholung, starke Unternehmenszahlen oder sinkende Zinsen stabilisieren Energiemärkte",
     ],
-    "Energie, Klima & Umwelt": [
-        "Öl-, Gas- oder Strommärkte stehen unter Druck oder es kommt zu Versorgungsstörungen",
-        "Öl-, Gas- oder Strommärkte entspannen sich oder Versorgungslage verbessert sich",
+    "Internationale Beziehungen & Sicherheit": [
+        "Krieg, Konflikt, Terrorgefahr oder Sanktionen erhöhen Risiken für Energieversorgung",
+        "Waffenruhe, Friedensgespräche oder Aufhebung von Sanktionen senken Versorgungsrisiken",
     ],
-    "Technologie, Wissenschaft & Gesundheit": [
-        "Störungen, Ausfälle oder Sicherheitslücken bei IT/Technologie verursachen Risiken",
-        "Durchbrüche in Forschung, Medizin oder Technologie bringen Fortschritt und Entlastung",
+    "Brennstoffpreise": [
+        "Steigende Gas-, Kohle- oder CO₂-Preise erhöhen die Stromerzeugungskosten",
+        "Fallende Gas-, Kohle- oder CO₂-Preise senken die Stromerzeugungskosten",
     ],
-    "Sport, Kultur & Lifestyle": [
-        "Sportereignisse, Kultur oder Prominenz sorgen für Kontroversen oder Skandale",
-        "Sportereignisse, Kultur oder Prominenz sorgen für Erfolge, Preise oder positive Resonanz",
+    "Wetter": [
+        "Kaltes, windarmes oder bewölktes Wetter erhöht Preisdruck am Strommarkt",
+        "Mildes Wetter, starke Winde oder viel Sonneneinstrahlung entlasten den Strommarkt",
     ],
     "Sonstiges": [
         "kein Bezug zu Energie, Wetter oder Finanzmärkten",
@@ -113,12 +113,12 @@ CANDIDATE_LABELS = [
 
 HIERARCHICAL_ROUTING_SETTINGS = {
     "stage_order": [
-        "Politik & öffentliche Ordnung",
-        "Internationale Beziehungen & Sicherheit",
+        "Nachfrage (Stromverbrauch)",
+        "Angebot (Erzeugung & Infrastruktur)",
         "Wirtschaft, Unternehmen & Finanzen",
-        "Energie, Klima & Umwelt",
-        "Technologie, Wissenschaft & Gesundheit",
-        "Sport, Kultur & Lifestyle",
+        "Internationale Beziehungen & Sicherheit",
+        "Brennstoffpreise",
+        "Wetter",
         "Sonstiges",
     ],
     "stage_thresholds": {
@@ -136,20 +136,20 @@ OTHER_LABEL = "kein Bezug zu Energie, Wetter oder Finanzmärkten"
 # Topic valence mapping for positive/negative news classification
 # Maps topic labels to their sentiment valence based on semantic content
 TOPIC_VALENCE_MAP = {
-    # Negative topics
-    "Regierung, Parlament oder Behörden beschließen strengere Gesetze, Steuern oder Auflagen": -1,
-    "Krieg, Konflikt, Terrorgefahr oder Sanktionen verschärfen die internationale Sicherheitslage": -1,
-    "Rezession, Unternehmenskrise, Bankenturbulenzen oder steigende Zinsen belasten die Wirtschaft": -1,
-    "Öl-, Gas- oder Strommärkte stehen unter Druck oder es kommt zu Versorgungsstörungen": -1,
-    "Störungen, Ausfälle oder Sicherheitslücken bei IT/Technologie verursachen Risiken": -1,
-    "Sportereignisse, Kultur oder Prominenz sorgen für Kontroversen oder Skandale": -1,
-    # Positive topics
-    "Regierung, Parlament oder Behörden lockern Gesetze, Steuern oder Auflagen": 1,
-    "Waffenruhe, Friedensgespräche oder Aufhebung von Sanktionen entspannen die internationale Sicherheitslage": 1,
-    "Konjunkturerholung, starke Unternehmenszahlen oder sinkende Zinsen stützen die Wirtschaft": 1,
-    "Öl-, Gas- oder Strommärkte entspannen sich oder Versorgungslage verbessert sich": 1,
-    "Durchbrüche in Forschung, Medizin oder Technologie bringen Fortschritt und Entlastung": 1,
-    "Sportereignisse, Kultur oder Prominenz sorgen für Erfolge, Preise oder positive Resonanz": 1,
+    # Negative topics (price increasing)
+    "Steigender Stromverbrauch durch Wirtschaft, Industrie oder Extremwetter erhöht die Nachfrage": -1,
+    "Ausfälle von Kraftwerken, Netzengpässe oder geringe erneuerbare Einspeisung reduzieren das Angebot": -1,
+    "Hohe Zinsen, Rezession, Unternehmenskrise oder steigende Zinsen belasten Energiemärkte": -1,
+    "Krieg, Konflikt, Terrorgefahr oder Sanktionen erhöhen Risiken für Energieversorgung": -1,
+    "Steigende Gas-, Kohle- oder CO₂-Preise erhöhen die Stromerzeugungskosten": -1,
+    "Kaltes, windarmes oder bewölktes Wetter erhöht Preisdruck am Strommarkt": -1,
+    # Positive topics (price decreasing)
+    "Sinkender Stromverbrauch durch Konjunkturschwäche oder mildes Wetter senkt die Nachfrage": 1,
+    "Hohe erneuerbare Einspeisung, neue Kapazitäten oder stabile Netze erhöhen das Angebot": 1,
+    "Sinkende Zinsen, Konjunkturerholung, starke Unternehmenszahlen oder sinkende Zinsen stabilisieren Energiemärkte": 1,
+    "Waffenruhe, Friedensgespräche oder Aufhebung von Sanktionen senken Versorgungsrisiken": 1,
+    "Fallende Gas-, Kohle- oder CO₂-Preise senken die Stromerzeugungskosten": 1,
+    "Mildes Wetter, starke Winde oder viel Sonneneinstrahlung entlasten den Strommarkt": 1,
     # Neutral/Other
     "kein Bezug zu Energie, Wetter oder Finanzmärkten": 0,
 }
