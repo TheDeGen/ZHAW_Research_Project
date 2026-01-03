@@ -247,7 +247,8 @@ def plot_confusion_matrices(models_dict, y_test, class_labels=None, label_encode
 
         cm = confusion_matrix(y_true, y_pred, labels=class_labels)
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_labels)
-        disp.plot(ax=ax, values_format='d', cmap='Blues', colorbar=False)
+        # Use inverted Cividis: low values (yellow) to high values (blue)
+        disp.plot(ax=ax, values_format='d', cmap='cividis_r', colorbar=False)
         ax.set_title(name, fontsize=_get_fontsize('title'))
         ax.set_xlabel('Predicted label', fontsize=_get_fontsize('label'))
         ax.set_ylabel('True label', fontsize=_get_fontsize('label'))
