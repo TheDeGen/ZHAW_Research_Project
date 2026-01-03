@@ -260,7 +260,7 @@ TIME_DECAY_LAMBDAS = [0.01, 0.05, 0.1, 0.25, 0.5]
 
 NEWS_DATA_PATH = "german_news_v1.csv"
 ENERGY_DATA_PATH = "energy_baseline.csv"
-MIN_TIMESTAMP = "2024-01-01"
+MIN_TIMESTAMP = "2025-01-01"
 
 # ============================================================================
 # VISUALIZATION CONFIGURATION
@@ -274,33 +274,33 @@ DEFAULT_DPI = 200  # Publication quality
 
 # Font sizes for consistent styling
 VIZ_TITLE_FONTSIZE = 15
-VIZ_LABEL_FONTSIZE = 13
-VIZ_TICK_FONTSIZE = 11
-VIZ_LEGEND_FONTSIZE = 10
-VIZ_ANNOTATION_FONTSIZE = 10
+VIZ_LABEL_FONTSIZE = 14
+VIZ_TICK_FONTSIZE = 12
+VIZ_LEGEND_FONTSIZE = 11
+VIZ_ANNOTATION_FONTSIZE = 11
 
 # Label truncation lengths
 VIZ_LABEL_MAX_CHARS = 45  # Standard truncation length for y-axis labels
 VIZ_LABEL_MAX_CHARS_SHORT = 35  # Shorter truncation for cramped spaces
 
-# Winter colormap - 10 evenly-spaced colors
-_winter = plt.cm.winter
-VIZ_COLOR_LIST = [_winter(i / 9) for i in range(10)]  # Returns RGBA tuples
+# Cividis colormap - 10 evenly-spaced colors
+_cividis = plt.cm.cividis
+VIZ_COLOR_LIST = [_cividis(i / 9) for i in range(10)]  # Returns RGBA tuples
 
-# Semantic color mappings for specific use cases (Winter-derived)
-_winter_cmap = plt.cm.winter
+# Semantic color mappings for specific use cases (Cividis-derived)
+_cividis_cmap = plt.cm.cividis
 VIZ_SEMANTIC_COLORS = {
-    "long": _winter_cmap(0.0),      # Winter start (cyan) for positive/long positions
-    "neutral": _winter_cmap(0.5),   # Winter middle for neutral
-    "short": _winter_cmap(1.0),     # Winter end (blue) for negative/short positions
-    "train": _winter_cmap(0.0),     # Winter start for training metrics
-    "validation": _winter_cmap(0.7), # Winter position for validation metrics
-    "test": _winter_cmap(0.9),      # Winter position for test metrics
+    "long": _cividis_cmap(0.0),      # Cividis start for positive/long positions
+    "neutral": _cividis_cmap(0.5),   # Cividis middle for neutral
+    "short": _cividis_cmap(0.85),    # Cividis position for negative/short positions (darker than 1.0)
+    "train": _cividis_cmap(0.0),     # Cividis start for training metrics
+    "validation": _cividis_cmap(0.7), # Cividis position for validation metrics
+    "test": _cividis_cmap(0.9),      # Cividis position for test metrics
 }
 
-# Colormaps for heatmaps (Winter)
-VIZ_CMAP_SEQUENTIAL = "winter"  # Winter for sequential data
-VIZ_CMAP_DIVERGING = "winter"   # Winter for diverging data
+# Colormaps for heatmaps (Cividis)
+VIZ_CMAP_SEQUENTIAL = "cividis"  # Cividis for sequential data
+VIZ_CMAP_DIVERGING = "cividis"   # Cividis for diverging data
 
 # Output directory for saved figures
 FIGURES_OUTPUT_DIR = "outputs/figures"

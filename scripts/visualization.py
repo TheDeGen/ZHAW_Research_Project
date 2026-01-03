@@ -31,7 +31,7 @@ except ImportError:
 
 def _get_colors(n: int = None) -> list:
     """
-    Return colors sampled sequentially from Winter colormap.
+    Return colors sampled sequentially from Cividis colormap.
 
     Args:
         n: Number of colors needed. If None, returns 10 colors.
@@ -42,9 +42,9 @@ def _get_colors(n: int = None) -> list:
     if n is None:
         n = 10
     
-    cmap = plt.cm.winter
-    # Distribute colors evenly across the full colormap range
-    return [cmap(i / max(n - 1, 1)) for i in range(n)]
+    cmap = plt.cm.cividis
+    # Distribute colors evenly across the colormap range, capped at 0.85 to avoid bright yellow
+    return [cmap(i * 0.85 / max(n - 1, 1)) for i in range(n)]
 
 
 def _truncate_label(label: str, max_chars: int = None) -> str:
@@ -119,7 +119,7 @@ def _get_figsize_for_labels(n_labels: int, max_label_len: int, base_width: float
 
 def _get_semantic_color(key: str):
     """
-    Get semantic color for specific visualization elements (Winter-derived).
+    Get semantic color for specific visualization elements (Cividis-derived).
 
     Args:
         key: One of 'long', 'neutral', 'short', 'train', 'validation', 'test'
@@ -130,8 +130,8 @@ def _get_semantic_color(key: str):
     if _HAS_CONFIG:
         return cfg.VIZ_SEMANTIC_COLORS.get(key, cfg.VIZ_COLOR_LIST[0])
 
-    # Fallback Winter colors
-    cmap = plt.cm.winter
+    # Fallback Cividis colors
+    cmap = plt.cm.cividis
     semantic_colors = {
         "long": cmap(0.0), "neutral": cmap(0.5), "short": cmap(1.0),
         "train": cmap(0.0), "validation": cmap(0.7), "test": cmap(0.9),
@@ -147,10 +147,10 @@ def _get_figsize() -> tuple:
 
 
 def _get_cmap_sequential() -> str:
-    """Get sequential colormap from config (Winter)."""
+    """Get sequential colormap from config (Cividis)."""
     if _HAS_CONFIG:
         return cfg.VIZ_CMAP_SEQUENTIAL
-    return "winter"
+    return "cividis"
 
 
 def _shorten_topic_label(label: str) -> str:
@@ -248,9 +248,9 @@ def plot_confusion_matrices(models_dict, y_test, class_labels=None, label_encode
         cm = confusion_matrix(y_true, y_pred, labels=class_labels)
         disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_labels)
         disp.plot(ax=ax, values_format='d', cmap='Blues', colorbar=False)
-        ax.set_title(name, fontweight='bold', fontsize=_get_fontsize('title'))
-        ax.set_xlabel('Predicted label', fontweight='bold', fontsize=_get_fontsize('label'))
-        ax.set_ylabel('True label', fontweight='bold', fontsize=_get_fontsize('label'))
+        ax.set_title(name, fontsize=_get_fontsize('title'))
+        ax.set_xlabel('Predicted label', fontsize=_get_fontsize('label'))
+        ax.set_ylabel('True label', fontsize=_get_fontsize('label'))
         ax.tick_params(labelsize=_get_fontsize('tick'))
 
     plt.tight_layout()
@@ -296,10 +296,13 @@ def plot_feature_importance(model, feature_names, model_name, top_n=10,
         .reset_index(drop=True)
     )
 
-    top_df = importance_df.head(top_n)
+    top_df = importance_df.head(top_n).copy()
     
-    # Calculate dynamic figure size based on label lengths
-    max_label_len = max(len(str(f)) for f in top_df['feature'])
+    # Shorten topic labels for display (use same shortened labels as other plots)
+    top_df['display_label'] = top_df['feature'].apply(_shorten_topic_label)
+    
+    # Calculate dynamic figure size based on shortened label lengths
+    max_label_len = max(len(str(f)) for f in top_df['display_label'])
     figsize = _get_figsize_for_labels(len(top_df), max_label_len, base_width=12)
     
     fig, ax = plt.subplots(figsize=figsize)
@@ -307,13 +310,13 @@ def plot_feature_importance(model, feature_names, model_name, top_n=10,
     sns.barplot(
         data=top_df,
         x="importance",
-        y="feature",
-        hue="feature",
+        y="display_label",
+        hue="display_label",
         palette=colors,
         legend=False,
         ax=ax
     )
-    ax.set_xlabel("Importance (Gain)", fontweight='bold', fontsize=_get_fontsize('label'))
+    ax.set_xlabel("Importance (Gain)", fontsize=_get_fontsize('label'))
     ax.set_ylabel("")
     ax.tick_params(axis='y', labelsize=_get_fontsize('tick'))
     ax.grid(alpha=0.3, axis='x')
@@ -401,8 +404,8 @@ def plot_roc_curves(models_dict, y_test, label_encoder=None, multiclass_average=
 
     ax.set_xlim([0.0, 1.0])
     ax.set_ylim([0.0, 1.05])
-    ax.set_xlabel('False Positive Rate', fontweight='bold', fontsize=_get_fontsize('label'))
-    ax.set_ylabel('True Positive Rate', fontweight='bold', fontsize=_get_fontsize('label'))
+    ax.set_xlabel('False Positive Rate', fontsize=_get_fontsize('label'))
+    ax.set_ylabel('True Positive Rate', fontsize=_get_fontsize('label'))
     ax.tick_params(labelsize=_get_fontsize('tick'))
     ax.legend(loc="lower right", fontsize=_get_fontsize('legend'))
     ax.grid(alpha=0.3)
@@ -703,8 +706,8 @@ def plot_class_distribution(y, title="Target Class Distribution", label_encoder=
     ax1.bar(range(len(unique)), counts, color=colors, edgecolor='black')
     ax1.set_xticks(range(len(unique)))
     ax1.set_xticklabels(unique)
-    ax1.set_xlabel('Class', fontweight='bold', fontsize=12)
-    ax1.set_ylabel('Count', fontweight='bold', fontsize=12)
+    ax1.set_xlabel('Class', fontsize=12)
+    ax1.set_ylabel('Count', fontsize=12)
     ax1.grid(axis='y', alpha=0.3)
 
     # Add count labels on bars
@@ -715,7 +718,7 @@ def plot_class_distribution(y, title="Target Class Distribution", label_encoder=
     # Pie chart
     ax2.pie(counts, labels=unique, autopct='%1.1f%%', colors=colors,
            startangle=90, textprops={'fontsize': 11})
-    ax2.set_title(f'{title} - Proportions', fontweight='bold', fontsize=14)
+    ax2.set_title(f'{title} - Proportions', fontsize=14)
 
     plt.tight_layout()
 
@@ -792,8 +795,8 @@ def plot_cumulative_returns(
         linestyle = linestyles[idx % len(linestyles)]
         ax.plot(cumulative, label=name, color=color, linestyle=linestyle, linewidth=2, alpha=0.8)
 
-    ax.set_xlabel("Time Period", fontweight='bold', fontsize=_get_fontsize('label'))
-    ax.set_ylabel(ylabel, fontweight='bold', fontsize=_get_fontsize('label'))
+    ax.set_xlabel("Time Period", fontsize=_get_fontsize('label'))
+    ax.set_ylabel(ylabel, fontsize=_get_fontsize('label'))
     ax.tick_params(labelsize=_get_fontsize('tick'))
     ax.axhline(0, color='black', linestyle='-', linewidth=0.8, alpha=0.5)
     ax.legend(loc='best', framealpha=0.9, fontsize=_get_fontsize('legend'))
@@ -859,18 +862,20 @@ def plot_nlp_feature_importance(
     importance_df["category"] = importance_df["feature"].apply(categorize_feature)
 
     # Panel 1: Top N NLP features
-    nlp_df = importance_df[importance_df["category"] == "NLP"].head(top_n)
+    nlp_df = importance_df[importance_df["category"] == "NLP"].head(top_n).copy()
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize)
 
     if len(nlp_df) > 0:
-        sns.barplot(data=nlp_df, x="importance", y="feature", ax=ax1, palette="winter")
-        ax1.set_title(f"Top {len(nlp_df)} NLP Features", fontweight="bold")
+        # Shorten topic labels for display
+        nlp_df['display_label'] = nlp_df['feature'].apply(_shorten_topic_label)
+        sns.barplot(data=nlp_df, x="importance", y="display_label", ax=ax1, palette="cividis")
+        ax1.set_title(f"Top {len(nlp_df)} NLP Features")
         ax1.set_xlabel("Importance (Gain)")
         ax1.set_ylabel("")
     else:
         ax1.text(0.5, 0.5, "No NLP features found", ha="center", va="center", fontsize=12)
-        ax1.set_title("Top NLP Features", fontweight="bold")
+        ax1.set_title("Top NLP Features")
 
     # Panel 2: Category comparison
     category_importance = importance_df.groupby("category")["importance"].sum().sort_values(ascending=False)
@@ -879,7 +884,7 @@ def plot_nlp_feature_importance(
     color_list = [colors.get(cat, "#808080") for cat in category_importance.index]
 
     ax2.bar(category_importance.index, category_importance.values, color=color_list, edgecolor="black", alpha=0.7)
-    ax2.set_title("Feature Importance by Category", fontweight="bold")
+    ax2.set_title("Feature Importance by Category")
     ax2.set_xlabel("Feature Category")
     ax2.set_ylabel("Total Importance")
     ax2.grid(True, alpha=0.3, axis="y")
@@ -923,9 +928,9 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame,
         target_counts = master_df[target_col].value_counts().sort_index()
         colors = [_get_semantic_color('short'), _get_semantic_color('neutral'), _get_semantic_color('long')]
         ax1.bar(target_counts.index, target_counts.values, color=colors, alpha=0.7, edgecolor='black')
-        ax1.set_xlabel('Target Class', fontweight='bold', fontsize=label_fs)
-        ax1.set_ylabel('Count', fontweight='bold', fontsize=label_fs)
-        ax1.set_title('Target Distribution', fontweight='bold', fontsize=title_fs)
+        ax1.set_xlabel('Target Class', fontsize=label_fs)
+        ax1.set_ylabel('Count', fontsize=label_fs)
+        ax1.set_title('Target Distribution', fontsize=title_fs)
         ax1.tick_params(labelsize=tick_fs)
         ax1.grid(alpha=0.3, axis='y')
         for i, (idx, val) in enumerate(target_counts.items()):
@@ -933,7 +938,7 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame,
             ax1.text(idx, val, f'{val}\n({pct:.1f}%)', ha='center', va='bottom', fontsize=annot_fs)
     else:
         ax1.text(0.5, 0.5, f'Column "{target_col}"\nnot found', ha='center', va='center', fontsize=tick_fs)
-        ax1.set_title('Target Distribution', fontweight='bold', fontsize=title_fs)
+        ax1.set_title('Target Distribution', fontsize=title_fs)
 
     # 2. Price spreads over time
     ax2 = fig.add_subplot(gs[0, 1:])
@@ -941,14 +946,14 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame,
         spread_series = master_df['real_spread_abs']
         ax2.plot(spread_series.index, spread_series.values, linewidth=0.5, alpha=0.7)
         ax2.axhline(0, color='black', linestyle='--', linewidth=1)
-        ax2.set_xlabel('Time', fontweight='bold', fontsize=label_fs)
-        ax2.set_ylabel('Spread (EUR/MWh)', fontweight='bold', fontsize=label_fs)
-        ax2.set_title('Price Spread Over Time (Spot - Day Ahead)', fontweight='bold', fontsize=title_fs)
+        ax2.set_xlabel('Time', fontsize=label_fs)
+        ax2.set_ylabel('Spread (EUR/MWh)', fontsize=label_fs)
+        ax2.set_title('Price Spread Over Time (Spot - Day Ahead)', fontsize=title_fs)
         ax2.tick_params(labelsize=tick_fs)
         ax2.grid(alpha=0.3)
     else:
         ax2.text(0.5, 0.5, 'Column "real_spread_abs"\nnot found', ha='center', va='center', fontsize=tick_fs)
-        ax2.set_title('Price Spread Over Time', fontweight='bold', fontsize=title_fs)
+        ax2.set_title('Price Spread Over Time', fontsize=title_fs)
 
     # 3. News classification distribution
     ax3 = fig.add_subplot(gs[1, 0])
@@ -958,13 +963,13 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame,
         ax3.set_yticks(range(len(class_counts)))
         ax3.set_yticklabels([_truncate_label(_shorten_topic_label(label), max_chars=35) 
                              for label in class_counts.index], fontsize=tick_fs - 1)
-        ax3.set_xlabel('Count', fontweight='bold', fontsize=label_fs)
-        ax3.set_title('Top 10 News Classifications', fontweight='bold', fontsize=title_fs)
+        ax3.set_xlabel('Count', fontsize=label_fs)
+        ax3.set_title('Top 10 News Classifications', fontsize=title_fs)
         ax3.tick_params(labelsize=tick_fs)
         ax3.grid(alpha=0.3, axis='x')
     else:
         ax3.text(0.5, 0.5, 'No news classification\ndata available', ha='center', va='center', fontsize=tick_fs)
-        ax3.set_title('Top 10 News Classifications', fontweight='bold', fontsize=title_fs)
+        ax3.set_title('Top 10 News Classifications', fontsize=title_fs)
 
     # 4. Spread volatility analysis (rolling standard deviation)
     ax4 = fig.add_subplot(gs[1, 1])
@@ -976,15 +981,15 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame,
 
         ax4.plot(rolling_24h.index, rolling_24h.values, label='24h window', linewidth=1.5, alpha=0.8)
         ax4.plot(rolling_168h.index, rolling_168h.values, label='1-week window', linewidth=1.5, alpha=0.8)
-        ax4.set_xlabel('Time', fontweight='bold', fontsize=label_fs)
-        ax4.set_ylabel('Volatility (EUR/MWh)', fontweight='bold', fontsize=label_fs)
-        ax4.set_title('Spread Volatility Over Time', fontweight='bold', fontsize=title_fs)
+        ax4.set_xlabel('Time', fontsize=label_fs)
+        ax4.set_ylabel('Volatility (EUR/MWh)', fontsize=label_fs)
+        ax4.set_title('Spread Volatility Over Time', fontsize=title_fs)
         ax4.tick_params(labelsize=tick_fs)
         ax4.legend(loc='best', fontsize=legend_fs)
         ax4.grid(alpha=0.3)
     else:
         ax4.text(0.5, 0.5, 'Insufficient data for\nvolatility analysis', ha='center', va='center', fontsize=tick_fs)
-        ax4.set_title('Spread Volatility Over Time', fontweight='bold', fontsize=title_fs)
+        ax4.set_title('Spread Volatility Over Time', fontsize=title_fs)
 
     # 5. Load distribution
     ax5 = fig.add_subplot(gs[1, 2])
@@ -992,28 +997,28 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame,
         load_series = master_df['Load'].dropna()
         if len(load_series) > 0:
             ax5.hist(load_series, bins=50, color=_get_colors(2)[1], alpha=0.7, edgecolor='black')
-            ax5.set_xlabel('Load (MW)', fontweight='bold', fontsize=label_fs)
-            ax5.set_ylabel('Frequency', fontweight='bold', fontsize=label_fs)
-            ax5.set_title('Load Distribution', fontweight='bold', fontsize=title_fs)
+            ax5.set_xlabel('Load (MW)', fontsize=label_fs)
+            ax5.set_ylabel('Frequency', fontsize=label_fs)
+            ax5.set_title('Load Distribution', fontsize=title_fs)
             ax5.tick_params(labelsize=tick_fs)
             ax5.grid(alpha=0.3, axis='y')
             ax5.axvline(load_series.mean(), color=_get_semantic_color('short'), linestyle='--', linewidth=2, label='Mean')
             ax5.legend(fontsize=legend_fs)
         else:
             ax5.text(0.5, 0.5, 'No Load data\navailable', ha='center', va='center', fontsize=tick_fs)
-            ax5.set_title('Load Distribution', fontweight='bold', fontsize=title_fs)
+            ax5.set_title('Load Distribution', fontsize=title_fs)
     else:
         ax5.text(0.5, 0.5, 'Column "Load"\nnot found', ha='center', va='center', fontsize=tick_fs)
-        ax5.set_title('Load Distribution', fontweight='bold', fontsize=title_fs)
+        ax5.set_title('Load Distribution', fontsize=title_fs)
 
     # 6. Hourly price patterns
     ax6 = fig.add_subplot(gs[2, 0])
     if 'hour' in master_df.columns and 'Spot Price' in master_df.columns:
         hourly_price = master_df.groupby('hour')['Spot Price'].mean()
         ax6.plot(hourly_price.index, hourly_price.values, marker='o', linewidth=2, markersize=4)
-        ax6.set_xlabel('Hour of Day', fontweight='bold', fontsize=label_fs)
-        ax6.set_ylabel('Average Spot Price (EUR/MWh)', fontweight='bold', fontsize=label_fs)
-        ax6.set_title('Average Spot Price by Hour', fontweight='bold', fontsize=title_fs)
+        ax6.set_xlabel('Hour of Day', fontsize=label_fs)
+        ax6.set_ylabel('Average Spot Price (EUR/MWh)', fontsize=label_fs)
+        ax6.set_title('Average Spot Price by Hour', fontsize=title_fs)
         ax6.tick_params(labelsize=tick_fs)
         ax6.grid(alpha=0.3)
         ax6.set_xticks(range(0, 24, 3))
@@ -1024,7 +1029,7 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame,
         if 'Spot Price' not in master_df.columns:
             missing_cols.append('Spot Price')
         ax6.text(0.5, 0.5, f'Missing columns:\n{", ".join(missing_cols)}', ha='center', va='center', fontsize=tick_fs)
-        ax6.set_title('Average Spot Price by Hour', fontweight='bold', fontsize=title_fs)
+        ax6.set_title('Average Spot Price by Hour', fontsize=title_fs)
 
     # 7. Day of week patterns
     ax7 = fig.add_subplot(gs[2, 1])
@@ -1034,8 +1039,8 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame,
         ax7.bar(range(7), dow_spread.values, color=_get_colors(1)[0], alpha=0.7, edgecolor='black')
         ax7.set_xticks(range(7))
         ax7.set_xticklabels(days, fontsize=tick_fs)
-        ax7.set_ylabel('Average Spread (EUR/MWh)', fontweight='bold', fontsize=label_fs)
-        ax7.set_title('Average Spread by Day of Week', fontweight='bold', fontsize=title_fs)
+        ax7.set_ylabel('Average Spread (EUR/MWh)', fontsize=label_fs)
+        ax7.set_title('Average Spread by Day of Week', fontsize=title_fs)
         ax7.tick_params(labelsize=tick_fs)
         ax7.grid(alpha=0.3, axis='y')
     else:
@@ -1045,24 +1050,23 @@ def plot_eda_dashboard(master_df: pd.DataFrame, news_df: pd.DataFrame,
         if 'real_spread_abs' not in master_df.columns:
             missing_cols.append('real_spread_abs')
         ax7.text(0.5, 0.5, f'Missing columns:\n{", ".join(missing_cols)}', ha='center', va='center', fontsize=tick_fs)
-        ax7.set_title('Average Spread by Day of Week', fontweight='bold', fontsize=title_fs)
+        ax7.set_title('Average Spread by Day of Week', fontsize=title_fs)
 
     # 8. News volume over time
     ax8 = fig.add_subplot(gs[2, 2])
     if hasattr(news_df.index, 'to_period') and len(news_df) > 0:
         news_daily = news_df.groupby(news_df.index.to_period('D')).size()
         ax8.plot(news_daily.index.to_timestamp(), news_daily.values, linewidth=1.5, color=_get_colors(3)[2])
-        ax8.set_xlabel('Date', fontweight='bold', fontsize=label_fs)
-        ax8.set_ylabel('Number of Articles', fontweight='bold', fontsize=label_fs)
-        ax8.set_title('News Volume Over Time', fontweight='bold', fontsize=title_fs)
+        ax8.set_xlabel('Date', fontsize=label_fs)
+        ax8.set_ylabel('Number of Articles', fontsize=label_fs)
+        ax8.set_title('News Volume Over Time', fontsize=title_fs)
         ax8.tick_params(labelsize=tick_fs)
         ax8.grid(alpha=0.3)
     else:
         ax8.text(0.5, 0.5, 'No time-indexed\nnews data available', ha='center', va='center', fontsize=tick_fs)
-        ax8.set_title('News Volume Over Time', fontweight='bold', fontsize=title_fs)
+        ax8.set_title('News Volume Over Time', fontsize=title_fs)
 
-    fig.suptitle('Exploratory Data Analysis Dashboard', fontsize=_get_fontsize('title') + 2, 
-                 fontweight='bold')
+    fig.suptitle('Exploratory Data Analysis Dashboard', fontsize=_get_fontsize('title') + 2)
 
     if save_path:
         _save_figure(fig, save_path)
@@ -1121,8 +1125,8 @@ def plot_embedding_quality(news_df: pd.DataFrame, n_samples: int = 500,
             ax.scatter(embedding_2d[:, 0], embedding_2d[:, 1],
                       c=_get_colors(1)[0], alpha=0.5, s=80)
 
-        ax.set_xlabel('UMAP Dimension 1', fontweight='bold', fontsize=12)
-        ax.set_ylabel('UMAP Dimension 2', fontweight='bold', fontsize=12)
+        ax.set_xlabel('UMAP Dimension 1', fontsize=12)
+        ax.set_ylabel('UMAP Dimension 2', fontsize=12)
         ax.grid(alpha=0.3)
     except ImportError:
         ax.text(0.5, 0.5, 'UMAP not installed\npip install umap-learn',
@@ -1209,18 +1213,10 @@ def plot_learning_curves(
         ax.plot(train_sizes_abs, gap, '--', color='gray', linewidth=1.5,
                alpha=0.7, label='Train-Val Gap')
 
-        ax.set_xlabel('Training Set Size', fontweight='bold', fontsize=12)
-        ax.set_ylabel(f'{scoring}', fontweight='bold', fontsize=12)
+        ax.set_xlabel('Training Set Size', fontsize=12)
+        ax.set_ylabel(f'{scoring}', fontsize=12)
         ax.legend(loc='best', fontsize=11)
         ax.grid(alpha=0.3)
-
-        # Annotate final scores
-        final_train = train_mean[-1]
-        final_val = val_mean[-1]
-        ax.text(0.02, 0.98,
-               f'Final Train: {final_train:.3f}\nFinal Val: {final_val:.3f}\nGap: {gap[-1]:.3f}',
-               transform=ax.transAxes, fontsize=10, verticalalignment='top',
-               bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
 
         plt.tight_layout()
 
@@ -1287,10 +1283,13 @@ def plot_feature_importance_shap(
         else:
             shap_values_plot = shap_values
 
+        # Shorten topic labels for display
+        display_names = [_shorten_topic_label(name) for name in feature_names]
+
         # Summary plot
         plt.figure(figsize=(12, 8))
         shap.summary_plot(shap_values_plot, X_test[:500],
-                         feature_names=feature_names,
+                         feature_names=display_names,
                          max_display=max_display, show=False)
         plt.tight_layout()
         plt.show()
@@ -1343,6 +1342,9 @@ def plot_permutation_importance(
         # Sort by importance
         sorted_idx = result.importances_mean.argsort()[::-1][:top_n]
 
+        # Shorten topic labels for display
+        display_names = [_shorten_topic_label(name) for name in feature_names]
+
         fig, ax = plt.subplots(figsize=(12, max(8, len(sorted_idx) * 0.4)))
 
         # Plot
@@ -1354,8 +1356,8 @@ def plot_permutation_importance(
                        medianprops=dict(color='red', linewidth=2))
 
         ax.set_yticks(positions)
-        ax.set_yticklabels([feature_names[i] for i in sorted_idx])
-        ax.set_xlabel('Decrease in Score', fontweight='bold', fontsize=12)
+        ax.set_yticklabels([display_names[i] for i in sorted_idx])
+        ax.set_xlabel('Decrease in Score', fontsize=12)
         ax.grid(alpha=0.3, axis='x')
 
         plt.tight_layout()
@@ -1364,7 +1366,7 @@ def plot_permutation_importance(
         print(f"✓ Permutation importance complete")
         print(f"  Top 5 features:")
         for i, idx in enumerate(sorted_idx[:5], 1):
-            print(f"    {i}. {feature_names[idx]}: {result.importances_mean[idx]:.4f} "
+            print(f"    {i}. {display_names[idx]}: {result.importances_mean[idx]:.4f} "
                  f"± {result.importances_std[idx]:.4f}")
         print(f"{'='*70}\n")
 
@@ -1488,8 +1490,8 @@ def plot_transaction_cost_sensitivity(
                 color=colors[idx % len(colors)], label=name.replace("LightGBM ", ""))
 
     ax1.axhline(0, color='black', linestyle='--', linewidth=1, alpha=0.5)
-    ax1.set_xlabel('Fixed Transaction Cost (EUR/MWh)', fontweight='bold', fontsize=12)
-    ax1.set_ylabel(f'Total Return ({unit})', fontweight='bold', fontsize=12)
+    ax1.set_xlabel('Fixed Transaction Cost (EUR/MWh)', fontsize=12)
+    ax1.set_ylabel(f'Total Return ({unit})', fontsize=12)
     ax1.legend(loc='best')
     ax1.grid(alpha=0.3)
 
@@ -1500,8 +1502,8 @@ def plot_transaction_cost_sensitivity(
                 color=colors[idx % len(colors)], label=name.replace("LightGBM ", ""))
 
     ax2.axhline(0, color='black', linestyle='--', linewidth=1, alpha=0.5)
-    ax2.set_xlabel('Fixed Transaction Cost (EUR/MWh)', fontweight='bold', fontsize=12)
-    ax2.set_ylabel('Sharpe Ratio (Annualized)', fontweight='bold', fontsize=12)
+    ax2.set_xlabel('Fixed Transaction Cost (EUR/MWh)', fontsize=12)
+    ax2.set_ylabel('Sharpe Ratio (Annualized)', fontsize=12)
     ax2.legend(loc='best')
     ax2.grid(alpha=0.3)
 
@@ -1556,7 +1558,7 @@ def plot_top_news_classifications(news_df: pd.DataFrame, top_n: int = 10,
     ax.set_yticklabels(labels, fontsize=_get_fontsize('tick'))
     ax.invert_yaxis()
 
-    ax.set_xlabel('Number of Articles', fontweight='bold', fontsize=_get_fontsize('label'))
+    ax.set_xlabel('Number of Articles', fontsize=_get_fontsize('label'))
     ax.grid(alpha=0.3, axis='x')
 
     for i, (count, pct) in enumerate(zip(class_counts.values,
@@ -1602,8 +1604,8 @@ def plot_target_distribution(master_df: pd.DataFrame, target_column: str = 'spre
 
     bars = ax.bar(labels, target_counts.values, color=colors, alpha=0.8, edgecolor='black')
 
-    ax.set_xlabel('Target Class', fontweight='bold', fontsize=_get_fontsize('label'))
-    ax.set_ylabel('Count', fontweight='bold', fontsize=_get_fontsize('label'))
+    ax.set_xlabel('Target Class', fontsize=_get_fontsize('label'))
+    ax.set_ylabel('Count', fontsize=_get_fontsize('label'))
     ax.tick_params(labelsize=_get_fontsize('tick'))
     ax.grid(alpha=0.3, axis='y')
 
@@ -1611,7 +1613,7 @@ def plot_target_distribution(master_df: pd.DataFrame, target_column: str = 'spre
     for bar, count in zip(bars, target_counts.values):
         pct = count / total * 100
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 20,
-                f'{count}\n({pct:.1f}%)', ha='center', va='bottom', 
+                f'{pct:.1f}%', ha='center', va='bottom', 
                 fontsize=_get_fontsize('annotation'))
 
     plt.tight_layout()
@@ -1666,7 +1668,7 @@ def plot_top_news_sources(news_df: pd.DataFrame, top_n: int = 10,
     ax.set_yticklabels(source_counts.index, fontsize=_get_fontsize('tick'))
     ax.invert_yaxis()
 
-    ax.set_xlabel('Number of Articles', fontweight='bold', fontsize=_get_fontsize('label'))
+    ax.set_xlabel('Number of Articles', fontsize=_get_fontsize('label'))
     ax.grid(alpha=0.3, axis='x')
 
     # Find max count to set x-axis limit with padding to prevent label overlap
@@ -1715,8 +1717,8 @@ def plot_news_hourly_coverage(news_df: pd.DataFrame, save_path: str = None, show
     ax.bar(hourly_counts.index, hourly_counts.values, color=_get_colors(1)[0],
            alpha=0.8, edgecolor='black')
 
-    ax.set_xlabel('Hour of Day', fontweight='bold', fontsize=12)
-    ax.set_ylabel('Number of Articles', fontweight='bold', fontsize=12)
+    ax.set_xlabel('Hour of Day', fontsize=12)
+    ax.set_ylabel('Number of Articles', fontsize=12)
     ax.set_xticks(range(0, 24, 2))
     ax.grid(alpha=0.3, axis='y')
 
@@ -1743,7 +1745,7 @@ def plot_news_volume_and_coverage(
     show: bool = True
 ):
     """
-    Plot news volume over time and hourly coverage side-by-side.
+    Plot hourly coverage and news volume over time side-by-side.
 
     Args:
         news_df: News dataframe with datetime index
@@ -1753,43 +1755,53 @@ def plot_news_volume_and_coverage(
     Returns:
         Tuple of (hourly_counts Series, daily_counts Series)
     """
+    import matplotlib.dates as mdates
+    
     if not isinstance(news_df.index, pd.DatetimeIndex):
         print("News dataframe must have DatetimeIndex.")
         return None
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
 
-    # Left panel: News Volume Over Time
-    if hasattr(news_df.index, 'to_period') and len(news_df) > 0:
-        news_daily = news_df.groupby(news_df.index.to_period('D')).size()
-        ax1.plot(news_daily.index.to_timestamp(), news_daily.values, 
-                linewidth=1.5, color=_get_colors(3)[2])
-        ax1.set_xlabel('Date', fontweight='bold', fontsize=_get_fontsize('label'))
-        ax1.set_ylabel('Number of Articles', fontweight='bold', fontsize=_get_fontsize('label'))
-        ax1.set_title('News Volume Over Time', fontweight='bold', fontsize=_get_fontsize('title'))
-        ax1.tick_params(labelsize=_get_fontsize('tick'))
-        ax1.grid(alpha=0.3)
-        daily_counts = news_daily
-    else:
-        ax1.text(0.5, 0.5, 'No time-indexed\nnews data available', 
-                ha='center', va='center', fontsize=_get_fontsize('tick'))
-        ax1.set_title('News Volume Over Time', fontweight='bold', fontsize=_get_fontsize('title'))
-        daily_counts = None
-
-    # Right panel: News Coverage by Hour
+    # Left panel: News Coverage by Hour
     hourly_counts = news_df.groupby(news_df.index.hour).size()
-    ax2.bar(hourly_counts.index, hourly_counts.values, color=_get_colors(1)[0],
+    ax1.bar(hourly_counts.index, hourly_counts.values, color=_get_colors(1)[0],
            alpha=0.8, edgecolor='black')
-    ax2.set_xlabel('Hour of Day', fontweight='bold', fontsize=_get_fontsize('label'))
-    ax2.set_ylabel('Number of Articles', fontweight='bold', fontsize=_get_fontsize('label'))
-    ax2.set_title('News Coverage by Hour', fontweight='bold', fontsize=_get_fontsize('title'))
-    ax2.set_xticks(range(0, 24, 2))
-    ax2.grid(alpha=0.3, axis='y')
+    ax1.set_xlabel('Hour of Day', fontsize=_get_fontsize('label'))
+    ax1.set_ylabel('Number of Articles', fontsize=_get_fontsize('label'))
+    ax1.set_title('News Coverage by Hour', fontsize=_get_fontsize('title'))
+    ax1.set_xticks(range(0, 24, 2))
+    ax1.tick_params(labelsize=_get_fontsize('tick'))
+    ax1.grid(alpha=0.3, axis='y')
 
     peak_hour = hourly_counts.idxmax()
-    ax2.axvline(peak_hour, color=_get_semantic_color('short'), linestyle='--', linewidth=2,
+    ax1.axvline(peak_hour, color=_get_semantic_color('short'), linestyle='--', linewidth=2,
                label=f'Peak: {peak_hour}:00')
-    ax2.legend(loc='best', fontsize=_get_fontsize('legend'))
+    ax1.legend(loc='upper right', fontsize=_get_fontsize('legend'))
+
+    # Right panel: News Volume Over Time
+    if hasattr(news_df.index, 'to_period') and len(news_df) > 0:
+        news_daily = news_df.groupby(news_df.index.to_period('D')).size()
+        ax2.plot(news_daily.index.to_timestamp(), news_daily.values, 
+                linewidth=1.5, color=_get_colors(3)[2])
+        ax2.set_xlabel('Date', fontsize=_get_fontsize('label'))
+        ax2.set_ylabel('Number of Articles', fontsize=_get_fontsize('label'))
+        ax2.set_title('News Volume Over Time', fontsize=_get_fontsize('title'))
+        ax2.tick_params(labelsize=_get_fontsize('tick'))
+        ax2.grid(alpha=0.3)
+        
+        # Configure date axis with AutoDateLocator for clean tick distribution
+        ax2.xaxis.set_major_locator(mdates.AutoDateLocator())
+        ax2.xaxis.set_major_formatter(mdates.ConciseDateFormatter(ax2.xaxis.get_major_locator()))
+        # Rotate date labels to prevent overlap (only for right panel)
+        plt.setp(ax2.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        daily_counts = news_daily
+    else:
+        ax2.text(0.5, 0.5, 'No time-indexed\nnews data available', 
+                ha='center', va='center', fontsize=_get_fontsize('tick'))
+        ax2.set_title('News Volume Over Time', fontsize=_get_fontsize('title'))
+        daily_counts = None
 
     plt.tight_layout()
 
@@ -1861,11 +1873,11 @@ def plot_equity_curve(
         ax.axhline(initial_capital, color='gray', linestyle=':', linewidth=1.5, 
                    alpha=0.5, label=f'Initial Capital (€{initial_capital:,.0f})')
     
-    ax.set_xlabel('Time', fontweight='bold', fontsize=_get_fontsize('label'))
+    ax.set_xlabel('Time', fontsize=_get_fontsize('label'))
     if show_pct_return:
-        ax.set_ylabel('Portfolio Return (%)', fontweight='bold', fontsize=_get_fontsize('label'))
+        ax.set_ylabel('Portfolio Return (%)', fontsize=_get_fontsize('label'))
     else:
-        ax.set_ylabel('Portfolio Value (EUR)', fontweight='bold', fontsize=_get_fontsize('label'))
+        ax.set_ylabel('Portfolio Value (EUR)', fontsize=_get_fontsize('label'))
     ax.tick_params(labelsize=_get_fontsize('tick'))
     ax.legend(loc='best', framealpha=0.9, fontsize=_get_fontsize('legend'))
     ax.grid(True, alpha=0.3)
@@ -1952,18 +1964,18 @@ def plot_portfolio_drawdown(
                 color=color, linestyle=linestyle)
     
     if show_pct_return:
-        ax1.set_ylabel('Portfolio Return (%)', fontsize=_get_fontsize('label'), fontweight='bold')
+        ax1.set_ylabel('Portfolio Return (%)', fontsize=_get_fontsize('label'))
         ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{x:.1f}%'))
         ax1.axhline(0, color='gray', linestyle=':', linewidth=1, alpha=0.5)
     else:
-        ax1.set_ylabel('Portfolio Value (EUR)', fontsize=_get_fontsize('label'), fontweight='bold')
+        ax1.set_ylabel('Portfolio Value (EUR)', fontsize=_get_fontsize('label'))
         ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'€{x:,.0f}'))
     ax1.tick_params(labelsize=_get_fontsize('tick'))
     ax1.legend(loc='best', framealpha=0.9, fontsize=_get_fontsize('legend'))
     ax1.grid(alpha=0.3)
     
-    ax2.set_xlabel('Time', fontsize=_get_fontsize('label'), fontweight='bold')
-    ax2.set_ylabel('Drawdown (%)', fontsize=_get_fontsize('label'), fontweight='bold')
+    ax2.set_xlabel('Time', fontsize=_get_fontsize('label'))
+    ax2.set_ylabel('Drawdown (%)', fontsize=_get_fontsize('label'))
     ax2.tick_params(labelsize=_get_fontsize('tick'))
     ax2.legend(loc='best', framealpha=0.9, fontsize=_get_fontsize('legend'))
     ax2.grid(alpha=0.3)
@@ -2071,7 +2083,7 @@ def plot_event_importance_heatmap(
     im = ax.imshow(
         corr_normalized.values,
         aspect='auto',
-        cmap='winter',
+        cmap='cividis',
         interpolation='nearest',
         vmin=0,
         vmax=1
@@ -2099,12 +2111,12 @@ def plot_event_importance_heatmap(
     # Add colorbar with proper sizing
     cbar = plt.colorbar(im, ax=ax, fraction=0.025, pad=0.02, shrink=0.8)
     cbar.set_label('Event Importance (Normalized Correlation)', 
-                   fontweight='bold', fontsize=_get_fontsize('label'))
+                   fontsize=_get_fontsize('label'))
     cbar.ax.tick_params(labelsize=_get_fontsize('tick'))
     
     # Add labels
-    ax.set_xlabel('Time Period (Weekly)', fontweight='bold', fontsize=_get_fontsize('label'))
-    ax.set_ylabel('Event Type', fontweight='bold', fontsize=_get_fontsize('label'))
+    ax.set_xlabel('Time Period (Weekly)', fontsize=_get_fontsize('label'))
+    ax.set_ylabel('Event Type', fontsize=_get_fontsize('label'))
     
     # Use tight_layout with padding
     plt.tight_layout(rect=[0, 0, 0.95, 0.95])
@@ -2212,6 +2224,7 @@ def plot_news_shocks_vs_price(
         width=bar_width,
         color=_get_semantic_color('long'),  # Viridis color for positive
         alpha=0.7,
+        edgecolor='black',
         label='Positive News Shocks'
     )
     
@@ -2224,11 +2237,11 @@ def plot_news_shocks_vs_price(
         label=f'{price_label} ({price_unit})'
     )
     
-    ax1.set_ylabel('Number of Positive News Shocks', fontweight='bold', 
+    ax1.set_ylabel('Number of Positive News Shocks', 
                    fontsize=_get_fontsize('label'), color=_get_semantic_color('long'))
-    ax1_twin.set_ylabel(f'{price_label} ({price_unit})', fontweight='bold', 
+    ax1_twin.set_ylabel(f'{price_label} ({price_unit})', 
                         fontsize=_get_fontsize('label'))
-    ax1.set_title('Positive News Shocks and Price/Spread', fontweight='bold', 
+    ax1.set_title('Positive News Shocks and Price/Spread', 
                   fontsize=_get_fontsize('title'))
     ax1.tick_params(axis='y', labelcolor=_get_semantic_color('long'), labelsize=_get_fontsize('tick'))
     ax1_twin.tick_params(axis='y', labelsize=_get_fontsize('tick'))
@@ -2250,6 +2263,7 @@ def plot_news_shocks_vs_price(
         width=bar_width,
         color=_get_semantic_color('short'),  # Viridis color for negative
         alpha=0.7,
+        edgecolor='black',
         label='Negative News Shocks'
     )
     
@@ -2262,12 +2276,12 @@ def plot_news_shocks_vs_price(
         label=f'{price_label} ({price_unit})'
     )
     
-    ax2.set_xlabel('Time', fontweight='bold', fontsize=_get_fontsize('label'))
-    ax2.set_ylabel('Number of Negative News Shocks', fontweight='bold', 
+    ax2.set_xlabel('Time', fontsize=_get_fontsize('label'))
+    ax2.set_ylabel('Number of Negative News Shocks', 
                    fontsize=_get_fontsize('label'), color=_get_semantic_color('short'))
-    ax2_twin.set_ylabel(f'{price_label} ({price_unit})', fontweight='bold', 
+    ax2_twin.set_ylabel(f'{price_label} ({price_unit})', 
                         fontsize=_get_fontsize('label'))
-    ax2.set_title('Negative News Shocks and Price/Spread', fontweight='bold', 
+    ax2.set_title('Negative News Shocks and Price/Spread',
                   fontsize=_get_fontsize('title'))
     ax2.tick_params(axis='y', labelcolor=_get_semantic_color('short'), labelsize=_get_fontsize('tick'))
     ax2_twin.tick_params(axis='y', labelsize=_get_fontsize('tick'))
