@@ -60,7 +60,7 @@ The distributions are deliberately constrained compared to typical defaults: max
 
 **Expanding Window Cross-Validation.** To preserve the temporal ordering established in Section 3.4.6, the pipeline implements an expanding-window (walk-forward) validation scheme wherein the training set grows monotonically whilst the test window advances forward in time (Tashman, 2000, pp. 437–450). The custom `ExpandingWindowSplitter` uses 8 folds with a 72-hour step size and 336-hour minimum training size, balancing variance estimation against computational cost (Cerqueira, Torgo, & Mozetič, 2020, p. 2005).
 
-**Class Imbalance Handling.** The three-class target distribution exhibits moderate imbalance, with the Neutral class comprising approximately 27% of observations compared to 37% for Short and 36% for Long. The pipeline addresses this through inverse-frequency sample weighting, assigning observation weights inversely proportional to class prevalence, ensuring that minority class observations contribute proportionally more to the loss function gradient (He & Garcia, 2009, pp. 1263–1284).
+**Class Imbalance Handling.** The three-class target distribution exhibits moderate imbalance, with the Neutral class comprising approximately 27% of observations compared to 37% for Short and 36% for Long. The pipeline addresses this through squared inverse-frequency sample weighting, assigning observation weights proportional to the square of the inverse class prevalence. This more aggressive weighting scheme amplifies the contribution of minority class observations to the loss function gradient, encouraging the model to produce predictions for severely underrepresented classes rather than defaulting to majority class predictions (He & Garcia, 2009, pp. 1263–1284).
 
 **Early Stopping Configuration.** To prevent overfitting during boosting iterations, early stopping monitors validation set performance and terminates training when the evaluation metric ceases improving (Prechelt, 1998, pp. 55–69). The configuration employs:
 
@@ -134,7 +134,7 @@ The grid comprises 27 configurations (3 × 3 × 3), substantially smaller than X
 - **Minimum training size**: 336 hours
 - **Early stopping rounds**: 20 iterations without improvement
 
-Class imbalance is addressed identically to XGBoost, using inverse-frequency sample weights computed from training set class prevalence.
+Class imbalance is addressed using standard inverse-frequency sample weights computed from training set class prevalence. Unlike XGBoost's squared weighting, LightGBM employs simple inverse-frequency weighting, as the meta-learner operates on a reduced feature space where less aggressive minority class emphasis is required.
 
 ---
 
