@@ -1,0 +1,775 @@
+28 
+ 
+3 Methodology 
+3.1 Framework Structure 
+• Introduction to our Data & Methodology pipeline 
+• Showcase an overview of the process used (flowchart) from data sourcing all the 
+way to model evaluation & backtesting. 
+• Explain and highlight which models will be used (XGBoost, Ridge & Logistic 
+Regression). We use a dual model set-up, where we first classify the next day 
+spread to be positive or negative alongside a confidence score, then use a 
+Logistic (or lightGBM) to then turn those forecast into long/short/hold decisions 
+• Quickly explain how the infrastructure was set up (GPU clustering, code 
+optimisation for parallel processing) 
+• Give our model a name (ex. PowerTree) 
+3.2 Data Sourcing 
+This research project integrates two complementary data streams: textual news data 
+capturing market sentiment and discourse, and quantitative electricity market data 
+reflecting trading dynamics. The sourcing strategy prioritised comprehensive coverage 
+across both domains whilst  maintaining data quality and the temporal alignment 
+necessary for signal generation. Electricity markets operate at the intersection of physical 
+commodity trading and information -driven financial markets, where news events can 
+trigger immediate price responses whilst fundamental supply-demand dynamics establish 
+longer-term trends (Ziel & Steinert, 2024). The following subsections detail the collection 
+procedures for news data (Section 3.2.1) and energy market data (Section 3.2.2), before 
+Section 3.3 describes the preprocessing pipeline that integrates these sources. 
+3.2.1 News Data Collection 
+News data were collected using NewsAPI , an aggregation service providing 
+programmatic access to historical and current news articles from diverse sources. 
+NewsAPI was selected over alternative services (such as GDELT or proprietary 
+Bloomberg feeds) due to its comprehensive metadata structure, including timestamps, 
+source attribution, and article descriptions, which enables precise temporal alignment 
+with market data. The service's structured data format has been employed in recent 
+29 
+ 
+commodity market forecasting applications to extract market-relevant signals from high-
+frequency news flows (SOURCE). 
+The news collection strategy encompassed both English - and German-language sources 
+to capture the full spectrum of discourse surrounding German electricity markets. 
+German-language sources provide domestic market insights, regulatory announcements, 
+and regional policy developments, whilst English -language international sources offer 
+broader market analysis, global energy trends, and institutional investor perspectives that 
+influence local prices (SOURCE). This bilingual approach is particularly relevant given 
+Germany's central role in European electricity markets, where cross -border flows and 
+interconnector capacity create price dependencies across multiple national markets 
+(SOURCE). All collected articles were subsequently translated into German (as detailed 
+in Section 3.3) to enable consistent downstream natural language processing. 
+The collection period spanned from 1 November 2020 to 31 October 2025, providing a 
+five-year window that captures significant market regime changes: the COVID -19 
+pandemic's demand disruptions, the 2022 –2023 energy crisis triggered by geopolitical 
+tensions following Russia's invasion of Ukraine, and the subsequent market stabilisation 
+accompanied by accelerated renewable deployment (SOURCE). This temporal coverage 
+exposes the model to diverse market conditions, including both low -volatility and crisis 
+periods, thereby improving robustness to the regime changes that characterise modern 
+electricity markets. 
+The retrieval strategy employed daily queries using NewsAPI's premium subscription tier, 
+which permits a maximum of 100 articles per API call. Each day's query retrieved articles 
+matching the specified keywords and source parameters (as detailed in Table XX). On 
+days when more than 100 matching articles were published, the API returned the 100 
+most relevant results ranked by NewsAPI's relevance algorithm; however, such instances 
+were rare across the five years. This systematic daily collection methodology aligns with 
+best practices for constructing news -based trading signals, where consistent temporal 
+coverage prevents information gaps that could compromise signal quality (Smales, 2014, 
+pp. 277–279). The collection contained 89,517 English -language and 122,208 German -
+language articles before preprocessing.  
+Table 1: News Search Parameters 
+Parameter English Sources German Sources 
+30 
+ 
+News Outlets ABC News, Associated Press, BBC 
+News, Bloomberg, CNN, MSNBC, 
+NBC News, Reuters, The Wall Street 
+Journal, The Washington Post, Time, 
+USA Today 
+Bild, Der Tagesspiegel, Die Zeit, 
+Focus, Handelsblatt, Spiegel Online, 
+WirtschaftsWoche 
+Keywords EPEX, Erdgas, Erdöl, EU, EZB, IEA, 
+Kohle, OPEC, Strombedarf, 
+Stromeffizienz, Stromerzeugung, 
+Stromnachfrage, Stromsparen, 
+Wetter, Zentralbank 
+ACER, Carbon, Climate, Coal, ECB, 
+Electricity, Emissions, Energy, EPEX, 
+European Comission, European Union, 
+Gas, Grid, Hydro, IEA, Infrastructure, 
+Interest Rates, Market, Nuclear, OECb, 
+OPEC, Oil, Pipeline, Policy, 
+Renewable, Solar, Storage, Supply, 
+Tariffs, Transmission, Wind 
+Articles Retrieved 89’517 122’208 
+Timeframe 1 November 2020 - 31 October 2025 1 November 2020 - 31 October 2025 
+ 
+The keyword selection strategy (detailed in Table XX) balanced domain specificity with 
+comprehensive coverage, incorporating terminology from energy infrastructure, market 
+mechanisms, relevant institution abbreviations,  and macroeconomic indicators. This 
+multi-faceted approach recognises that electricity prices respond to diverse information 
+sources, ranging from technical factors such as renewable generation forecasts to broader 
+economic indicators that affect industrial demand (QUELLE AUS TEIL OBEN).  
+3.2.2 Energy Market Data Collection 
+Energy market data were sourced from Energy-Charts.info, a platform maintained by the 
+Fraunhofer Institute for Solar Energy Systems (ISE) that has become a widely used 
+resource in German electricity market research ( Wirth, 2023). The platform aggregates 
+data from multiple authoritative sources, including ENTSO -E, EPEX SPOT, and 
+Germany's four TSO’s, providing harmonised datasets that would otherwise require 
+complex reconciliation across different source systems ( Fraunhofer ISE, 2024; Schmidt 
+et al., 2023). 
+Data were retrieved at 15 -minute granularity for the period 1 November 2020 to 31 
+October 2025, matching the news collection timeframe. The following price variables 
+were collected: day-ahead auction prices (EUR/MWh) representing the uniform clearing 
+prices established in the daily EPEX SPOT auction, and intraday continuous market 
+prices (EUR/MWh) reflecting real-time trading activity. These two price series form the 
+basis for computing the spot -day-ahead spread that serves as the target variable for this 
+study. 
+31 
+ 
+Generation volumes were retrieved , disaggregated by source category to capture the 
+supply-side dynamics that influence price formation. The dataset includes output from 
+onshore wind, offshore wind, solar photovoltaic, nuclear, lignite, hard coal, natural gas, 
+pumped-hydro, and run-of-river hydro facilities  (SOURCE). This granular breakdown 
+enables the model to account for the merit -order effects discussed in Section 2.1, where 
+low-marginal-cost renewables displace higher -cost thermal generation and compress  
+electricity prices during periods of high renewable feed -in. Total electricity demand 
+(MW) was also collected, representing the aggregate load that must be balanced against 
+generation in real time. 
+The raw dataset comprised approximately 175,000 observations at 15-minute resolution. 
+These data were converted from the original JSON format to CSV for subsequent 
+preprocessing. Quality assessment of the raw data identified several categories of missing 
+or anomalous values. Gaps in price reporting occurred during approximately 0.4% of 15-
+minute intervals, concentrated around daylight saving time transitions, exchange system 
+maintenance windows, and periods of extreme market stress when trading was 
+temporarily suspended. These data quality issues were addressed during the 
+preprocessing stage described in Section 3.3. 
+3.3 Data Preprocessing 
+The preprocessing pipeline comprised two parallel workflows: one for news data and one 
+for energy market data, which were subsequently integrated to construct the final 
+analytical dataset. This section details the procedures employed to ensure data quality , 
+topical relevance, and temporal alignment across these heterogeneous sources. 
+3.3.1 News Corpus Refinement 
+The broad keyword-based retrieval strategy employed in Section 3.2.1, whilst ensuring 
+comprehensive coverage of potentially relevant content, inevitably captured substantial 
+quantities of off -topic material. Articles matching terms such as "energy" or "mar ket" 
+frequently addressed topics unrelated to electricity trading, including sports events, 
+entertainment news, and general political coverage. Rigorous filtering was therefore 
+required to isolate energy-relevant news content suitable for signal generation. 
+Off-topic content was identified and removed through an iterative refinement procedure 
+using BERTopic ( Grootendorst, 2022 ), an unsupervised topic modelling framework 
+32 
+ 
+combining transformer -based embeddings with hierarchical density -based clustering. 
+BERTopic was selected for this task because it enables the discovery of latent thematic 
+structures without requiring predefined category labels, making it well -suited to  
+exploratory corpus analysis in which the full range of off -topic content is not known in 
+advance (SOURCE). The framework's use of HDBSCAN clustering also accommodates 
+topics of varying sizes and explicitly identifies noise documents that do not belong to any 
+coherent theme. 
+Each iteration of the refinement procedure proceeded as follows: (1) a topic model was 
+fitted to the corpus to discover latent thematic clusters; (2) human reviewers inspected 
+topic labels, representative keywords, and sample documents to identify non -energy-
+related themes; (3) characteristic keywords and phrases associated with off-topic clusters 
+were extracted to construct exclusion filters; (4) articles containing these keywords in 
+titles or descriptions were removed from the corpus; and (5) the filtered  corpus was 
+resubmitted for subsequent refinement. This human -in-the-loop approach ensured that 
+automated clustering was validated against domain expertise before content removal, 
+preventing the erroneous exclusion of legitimately relevant articles that mi ght share 
+surface-level vocabulary with off-topic content. 
+Nine iterative filtering rounds were applied to the English corpus, progressively removing 
+articles associated with sports coverage (team names, match results, athlete profiles), 
+entertainment news (film releases, celebrity coverage, television programming ), crime 
+reporting (arrests, trials, investigations), retail and consumer news (product launches, 
+shopping trends), health and medical coverage unrelated to energy policy, weather 
+reporting without market implications, and general political coverage lackin g energy or 
+economic relevance. This process reduced the English corpus from 89,517 to 39,744 
+articles, a 55.6% reduction . The substantial reduction reflects the broad semantic scope 
+of English -language international news sources, where energy -related keywords 
+frequently co-occur with unrelated content. 
+The German corpus required only three iterative rounds, targeting crime, education, 
+sports, and tourism content, and was reduced from 122,208 to 113,894 articles , which 
+represents a more modest 6.8% reduction. The disparity in reduction rates suggests that 
+German-language sources retrieved via energy-specific keywords were more topical than 
+their English-language counterparts. This likely reflects the more specialised focus of 
+33 
+ 
+German business publications such as Handelsblatt and WirtschaftsWoche, which 
+concentrate on economic and market coverage rather than general news. A detailed log of 
+excluded topic categories and representative keywords per iteration is provided in 
+Appendix X. 
+Following topic-based filtering, English articles were translated into German using the 
+Google Translate API via the deep -translator Python library. Translation into German 
+(rather than translating German content into English) was chosen for two reasons. F irst, 
+German-language transformer models fine -tuned on energy and economic terminology 
+prevalent in the DACH-region discourse were available for downstream classification 
+tasks. Second, the majority of the filtered corpus (74%) was already in German, 
+minimising the proportion of content subject to potential translation errors. The translated 
+English corpus ( 39,744 articles) was merged with the filtered German corpus ( 113,894 
+articles), yielding a total of 153,638 articles . After removing translation failures and 
+malformed entries, the final corpus comprised 149,512 German-language articles 
+spanning the five-year collection period. 
+3.3.2 Energy Market Data Processing 
+Energy market data underwent preprocessing to ensure temporal alignment with the news 
+corpus and to prepare variables for feature engineering. The raw data, retrieved at 15 -
+minute granularity, were resampled to hourly frequency by computing means for price  
+variables and sums for volume variables. Hourly aggregation was selected to align with 
+the day -ahead auction structure, where prices are determined for each hour of the 
+following day, and to reduce computational overhead whilst preserving meaningful 
+intraday variation. Following resampling, the energy dataset comprised 43,824 hourly 
+observations spanning the five-year collection period. 
+Missing values were identified in 192 hourly records , primarily during daylight saving 
+time transitions and periods of data reporting gaps. These observations were excluded 
+rather than imputed to preserve data integrity, as interpolation of price data during market 
+discontinuities could introduce spurious patterns. Anomalous price observations , 
+including negative prices below -500 EUR/MWh and favourable prices exceeding 1,000 
+EUR/MWh, were retained in the dataset, as these extreme values represent genuine 
+market conditions during periods of renewable oversupply or acute scarcity rather than 
+34 
+ 
+data errors. After excluding outlier s, the processed energy dataset comprised 43,632 
+hourly observations. 
+3.4 Feature Engineering 
+The feature engineering process transforms raw energy market data and pre -processed 
+news articles into a structured feature matrix suitable for predictive modelling. This 
+section details the construction of baseline features derived from electricity market  
+fundamentals, the extraction of topical signals via zero-shot classification, the generation 
+of semantic embeddings from news text, and the temporal aggregation of these news -
+derived features using exponential -decay weighting. The resulting feature set in tegrates 
+both quantitative market dynamics and qualitative information encoded in news 
+discourse, thereby enabling the model to capture the complex interplay between market 
+fundamentals and information flows that characterise short -term electricity price 
+movements. 
+3.4.1 Baseline Features 
+The baseline feature set comprises variables derived directly from the energy market data 
+described in Section 3. 2.2. These features capture the fundamental supply -demand 
+dynamics that drive electricity price formation, as well as temporal patterns that reflect 
+the cyclical nature of electricity consumption (SOURCE 2.1). 
+Price and Spread Features: The primary price variables are the day-ahead auction price 
+(EUR/MWh) and the intraday spot price (EUR/MWh), both resampled at hourly 
+frequency. The absolute spread between these prices, computed as the difference between 
+spot and day-ahead values, serves as the basis for the target variable. This spread reflects 
+the deviation between anticipated and realised market conditions, c apturing the 
+information advantage that accrues between the day -ahead auction close and real -time 
+delivery (SOURCE). 
+Generation and Load Features: Aggregate electricity generation and total system load 
+(MW) provide direct measures of supply-demand balance. As discussed in Section 2.1.4, 
+the merit -order effect implies that price formation depends critically on the marginal 
+generating unit dispatched to meet demand. Aggregate load serves as a proxy for demand 
+pressure, where higher consumption during peak periods typically elevates prices by 
+requiring the dispatch of higher-cost thermal generation (Edwards, 2023, pp. 134–138). 
+35 
+ 
+Lagged Features: To capture autocorrelation in electricity prices and demand patterns, 
+lagged values of key variables are inc luded at two horizons: 24 hours and 168 hours . 
+Specifically, the feature set contains price_lag_24, price_lag_168, load_lag_24, and 
+load_lag_168. These lags reflect the strong daily and weekly seasonality documented in 
+electricity market research, in which  demand patterns exhibit pronounced differences 
+between weekdays and weekends and between daytime peak hours and overnight off -
+peak periods (Weron, 2014, pp. 1049–1051). 
+ 
+Temporal Features: Categorical and cyclical time indicators encode the position of each 
+observation within relevant periodic structures: 
+• hour (0–23): Captures intraday variation aligned with consumption patterns 
+• day_of_week (0–6): Distinguishes weekday from weekend dynamics 
+• day_of_year (1–366): Encodes annual seasonal effects, including heating and 
+cooling demand 
+• week_of_year (1–52): Provides coarser seasonal resolution 
+• month (1–12): Captures broader seasonal trends in renewable generation and 
+demand 
+Together, these 13 baseline features establish a foundation that captures the structural 
+characteristics of electricity markets before the incorporation of news-derived signals. 
+3.4.2 Topic Classification via Zero-Shot Learning 
+The transformation of news articles into structured topical features is achieved via a zero-
+shot classification pipeline that assigns each article to predefined energy -relevant 
+categories derived from section 2.1. This approach leverages the semantic generalisation 
+capabilities of large language models, enabling classification across diverse topic labels 
+based solely on natural language descriptions (Yin et al., 2019, pp. 1–3). 
+The classification pipeline employs the mDeBERTa-v3-base-xnli-multilingual-nli-2mil7 
+model developed by Laurer et al. (202 4), which extends Microsoft's DeBERTa -v3 
+architecture (He et al., 2023)  to multilingual zero -shot classification. DeBERTa -v3 
+improves upon earlier transformer architectures by employing  disentangled attention 
+mechanisms that separately encode content and position al information, combined with 
+36 
+ 
+ELECTRA-style replaced-token detection during pre-training, achieving state-of-the-art 
+performance on natural language understanding benchmarks (He et al., 2023, pp. 6–9). 
+Zero-shot classification through NLI operates by reformulating the classification task as 
+textual entailment(Yin et al., 2019, pp. 1–4). For each candidate label, the model evaluates 
+whether a hypothesis constructed from the label is entailed by the input text (premise). 
+The hypothesis template employed is: 
+"Der Artikel handelt von: {label}." (English: "The article is about: {label}.") 
+The model outputs entailment probabilities for each label, and the label with the highest 
+probability is  assigned as the classification. This formulation enables flexible 
+classification across arbitrary label sets without retraining, a property particularly 
+valuable when domain-specific labelled data are scarce or costly to obtain  (Laurer et al., 
+2024, pp. 3–6). 
+The topic taxonomy was designed to capture the primary drivers of electricity price 
+variation identified in Section 2.1  and was  organised into a two -stage hierarchical 
+structure that balances classification precision with computational efficiency. The first 
+stage routes articles to one of seven high-level categories, while the second stage assigns 
+articles to specific leaf topics within the selected category. 
+The seven high-level categories reflect distinct channels through which news content may 
+influence electricity prices: 
+• Nachfrage (Demand): News affecting electricity consumption levels 
+• Angebot (Supply): News concerning generation capacity and availability 
+• Brennstoffpreise (Fuel Prices): News on input costs for thermal generation 
+• Makrofinanzen (Macro Finance): Broader economic conditions affecting markets 
+• Geopolitik (Geopolitics): International developments impacting energy supply 
+• Wetter (Weather): Meteorological conditions influencing demand and renewable 
+output 
+• Sonstiges (Other): Articles lacking clear energy market relevance 
+This categorisation draws on the supply and demand factors discussed in Section 2.1, 
+where fuel prices, weather conditions, and geopolitical developments were identified as 
+key determinants of electricity price dynamics. Within each high -level category, mo re 
+37 
+ 
+granular leaf topics capture directional implications for electricity prices. The complete 
+taxonomy can be seen in Table XX. 
+Category Leaf Topics 
+Nachfrage Electricity consumption in Germany rising; Electricity consumption in Germany 
+falling 
+Angebot Wind and solar generation rising; Wind and solar generation falling; Grid or plant 
+outages reducing supply; Expansion of LNG terminals, pipelines, or plants 
+increasing supply 
+Brennstoffpreise Wholesale gas prices rising; Wholesale gas prices falling 
+Makrofinanzen Rising interest rates or high inflation tightening markets; Falling interest rates or 
+easing inflation calming markets 
+Geopolitik Geopolitical tensions or sanctions exacerbating energy supply; Geopolitical détente 
+or lifted sanctions reducing supply risks 
+Wetter Cold, calm, or overcast conditions increasing price pressure; Mild weather, strong 
+wind, or sunshine easing prices 
+Sonstiges No relevance to energy, weather, or financial markets 
+Table XX:  
+The directional framing of leaf topics (rising/falling, increasing/decreasing) enables the 
+model to capture not merely topical relevance but also the implied price impact direction, 
+which is critical for generating actionable trading signals. It should be noted that certain 
+factors relevant to electricity price formation, such as carbon prices under the EU 
+Emissions Trading System (EU ETS) and cross -border interconnector flows, are not 
+explicitly represented in this taxonomy. These omissions reflect the focus on factors most 
+directly captured in German -language news discourse and represent a limitation of the 
+current approach. 
+The hierarchical classification proceeds through two inference stages with confidence -
+based fallback logic to handle ambiguous cases. Each article's title is processed against 
+the seven category labels using the zero -shot pipeline. The model returns probab ility 
+scores reflecting the confidence of each category assignment. If the highest -scoring 
+category exceeds the Stage 1 threshold ( τ₁ = 0.35), the article proceeds to Stage 2 
+classification within that category; otherwise, it is routed to the fallback cate gory 
+("Sonstiges"). 
+Within the assigned category, the article is classified against the corresponding leaf topics. 
+If the selected category contains multiple leaf topics, a second inference pass determines 
+the specific topic. A Stage 2 threshold (τ₂ = 0.25) governs whether the leaf assignment is 
+retained or whether the article falls back to the default "other" topic. 
+Articles initially classified as "Sonstiges" (no energy relevance) undergo a secondary 
+classification using the article description rather than the title. This fallback addresses 
+38 
+ 
+cases in which headlines are ambiguous , but article summaries provide clearer topical 
+signals. The reclassified results replace the initial "other" assignment where a more 
+specific topic achieves sufficient confidence. 
+The threshold values ( τ₁ = 0.35, τ₂ = 0.25) were determined through manual inspection 
+of classification score distributions, balancing the trade -off between coverage (retaining 
+more articles in specific categories) and precision (avoiding misclassification of 
+ambiguous content), following the calibration approach discussed by Laurer et al. (2024). 
+Lower Stage 2 thresholds reflect the observation that within-category classification tends 
+to produce lower absolute confidence scores due to the semantic similar ity among leaf 
+topics within the same category. 
+Articles classified as having no energy relevance are excluded from subsequent time -
+decay aggregation, ensuring that the news -derived features reflect only content with 
+plausible market relevance. This filtering step is essential, given the broad keyword-based 
+data-sourcing strategy employed, which inevitably captured some off -topic content 
+despite the preprocessing refinements described in Section 3.3.1. 
+3.4.3 Sentence Embedding Generation 
+Complementing the discrete topical classification, dense sentence embeddings capture 
+semantic information that predefined topic categories may not fully represent. While 
+zero-shot classification assigns articles to discrete labels, embeddings encode the fu ll 
+semantic content of article text as continuous vectors, preserving nuanced information 
+that could inform price predictions. 
+The embedding pipeline employs the paraphrase-multilingual-MiniLM-L12-v2 model 
+from the Sentence Transformers library (Reimers & Gurevych, 2019, pp. 1 –2). This 
+model generates 384 -dimensional dense vector representations optimised for semantic 
+similarity tasks across 50+ languages, including German. 
+The architecture builds upon the MiniLM knowledge distillation framework (Wang et al., 
+2020, pp. 2 –5), which compresses larger transformer models while preserving most of 
+their representational capacity. MiniLM achieves this compression by training a smaller 
+student model to mimic the self-attention distributions of a larger teacher model, yielding 
+compact models suitable for large-scale text processing without substantial performance 
+degradation. 
+39 
+ 
+This multilingual capability extends monolingual sentence embeddings to multiple 
+languages through knowledge distillation on parallel corpora  (Reimers & Gurevych, 
+2020, pp. 1 –3). A fixed English teacher model produces target embeddings, while the 
+student model learns to map both English text and its translations to the exact vector 
+representation. This approach ensures that semantically equivalent content in different 
+languages maps to similar positions in the embedding space. 
+For each news article, the embedding is computed from the article title using mean 
+pooling over the contextualised token representations produced by the final transformer 
+layer. Titles were selected over full article text for computational efficiency, as headlines 
+typically convey the primary informational content relevant to rapid market reactions . 
+However, this approach may lose nuanced information contained in article bodies, 
+representing a trade -off between computational tractability and information 
+completeness. 
+The output of this stage is a 384 -dimensional embedding vector for each article, stored 
+alongside the article metadata for subsequent temporal aggregation. 
+3.4.4 Time-Decay Aggregation of News Features 
+Individual article-level classifications and embeddings must be aggregated to the hourly 
+resolution of the energy market data to enable joint modelling. The aggregation procedure 
+employs exponential time -decay weighting, which assigns greater influence on more 
+recent articles while retaining diminishing contributions from older content within a 
+lookback window. This approach reflects the intuition that news impact on market 
+expectations decays over time as information is absorbed and superseded by subseque nt 
+developments. 
+The application of exponential decay weighting to news signals draws on established 
+practices in financial forecasting and time -series analysis. Studies demonstrated that 
+media content influences investor sentiment and stock returns, with the effect diminishing 
+over subsequent trading days as information is incorporated into prices  (Tetlock, 2007, 
+pp. 1149 –1151). Further work i n commodity markets demonstrated that incorporating 
+time-decayed news sentiment significantly improves crude oil price forecasting, with the 
+decay parameter governing the model’s effective memory horizon (Li et al., 2021, pp. 3–
+4).  
+40 
+ 
+In electricity markets, the high frequency of price dynamics and the rapid incorporation 
+of information suggest that news relevance diminishes relatively quickly. Forecast 
+revisions for renewable generation, updates to plant availability, and shifts in dema nd 
+expectations are continuously reflected in intraday trading, implying that older news 
+articles provide progressively less marginal information (Weron, 2014, pp. 1031–1032). 
+The exponential decay formulation provides a parsimonious representation of this 
+information decay: 
+wi  =  e−λ ⋅ hi 
+Where 𝑤𝑖   is the weight assigned to the article 𝑖, λ is the decay rate parameter, and ℎ𝑖 is 
+the number of hours elapsed since the article 𝑖 was published. Higher values of λ produce 
+faster decay, concentrating influence on very recent articles, while lower values extend 
+the effective memory horizon, allowing older articles to retain meaningful weight. 
+For each hourly timestamp in the energy dataset, time -decayed weighted counts are 
+computed for each of the 14 leaf topics. The aggregation proceeds as follows: 
+1. Define Lookback Window : For timestamp 𝑡, identify all articles published 
+within the interval (t − L, t], where 𝐿 is the lookback window in hours. 
+2. Compute Decay Weights: For each article 𝑖 in the window, calculate the decay 
+weight wi = e−λ⋅hi , where hi = t − ti is the number of hours since the time of 
+publication. 
+3. Aggregate by Topic : For each topic 𝑘, compute the weighted count  as 
+topic_countk(t) = ∑ wii∈topic k  
+4. Filter Irrelevant Articles: Articles classified as "Sonstiges" are excluded from 
+the aggregation, ensuring that topic features reflect only energy -relevant news 
+content. 
+The output is a matrix of dimension (T × 14), where 𝑇 denotes the number of hourly 
+timestamps, and each column represents the time -decayed count for a given topic. This 
+aggregation preserves the interpretability of topical features: higher values indicate 
+greater recent news volume on that topic, with recency weighted. The directional framing 
+of topics (e.g., "gas prices rising" vs. "gas prices falling") enables the model to distinguish 
+between news flows with opposing price implications. 
+41 
+ 
+Time-decayed aggregation of embeddings follows a similar procedure, with the key 
+difference that vector averages replace scalar sums: 
+1. Define Lookback Window: Identify articles within (t − L, t] for each timestamp 
+𝑡. 
+2. Compute Decay Weights: Calculate wi = e−λ⋅hi  for each article. 
+3. Weighted Average Embedding : Compute the aggregated embedding as  
+eagg(t) =
+∑ wii ⋅ei
+∑ wii
+, where ei is the 384 -dimensional embedding vector for the 
+article 𝑖. 
+The weighted average ensures that the aggregated embedding lies within the convex hull 
+of individual article embeddings , preserving semantic interpretability. If no articles fall 
+within the lookback window for a given timestamp, the aggregated embedding is set to 
+zero, indicating the absence of relevant news content. The output is a matrix of dimension 
+(T × 384), representing the time -decayed average semantic content of recent news at 
+each timestamp. 
+The lookback window (𝐿) and decay rate (λ) jointly determine the temporal dynamics of 
+news feature aggregation. Shorter lookback windows with higher decay rates capture 
+rapid, short-term news effects, while longer windows with lower decay rates smooth over 
+transient fluctuations to capture more persistent trends. 
+Given the uncertainty regarding optimal parameter values, a grid search approach is 
+employed across a range of parameter combinations: 
+Parameter Values tested 
+Lookback Window (L) 24, 48, 72, 168, 336, 504 hours 
+Decay Lambda (𝜆) 0.01, 0.05, 0.1, 0.25, 0.5 
+ 
+This yields 30 parameter combinations, each producing a distinct set of time -decayed 
+topic and embedding features. The optimal combination is selected through the model 
+validation procedure described in Section 3.5, which evaluates downstream prediction 
+performance across the parameter grid. 
+ 
+The default parameters ( L =  336 hours, λ =  0.05) reflect a two -week lookback with 
+moderate decay, balancing responsiveness to recent news against stability from a broader 
+42 
+ 
+temporal context. With 𝜆 =  0.05, an article published 24 hours ago retains approximately 
+30% of its initial weight ( e−0.05×24 ≈ 0.30), while an article from one week ago (168 
+hours) retains only about 0.02% (e−0.05×168 ≈ 0.0002). 
+3.4.5 Dimensionality Reduction of Aggregated Embeddings 
+The 384-dimensional time-decayed embedding vectors pose challenges for downstream 
+modelling due to their high dimensionality and potential for overfitting, particularly given 
+the limited sample size relative to feature dimensionality. Dimensionality reduct ion 
+techniques project these high-dimensional representations into a lower-dimensional space 
+while preserving essential structure, thereby improving computational efficiency and 
+model generalisation. 
+The UMAP algorithm described in Section 2.2.2 is the primary dimensionality-reduction 
+method used in this research project . UMAP was chosen because it  offers superior 
+scalability to large datasets and better preservation of global structure, making it well -
+suited for the continuous semantic spaces produced by transformer embeddings (McInnes 
+et al., 2020, pp. 1–2). 
+The UMAP configuration employs the following parameters: 
+• n_components = 20: Target dimensionality, reducing the 384-dimensional input 
+by a factor of approximately 19 
+• n_neighbors = 15: Local neighbourhood size, controlling the balance between 
+local and global structure preservation 
+• min_dist = 0.1: Minimum distance between points in the embedding, governing 
+clustering tightness 
+ 
+These parameters follow the guidelines provided by McInnes et al. (2018), wh o 
+recommend n_neighbors values between 10 and 50 to balance local and global structure 
+preservation, and min_dist values between 0.0 and 0.5 to control the tightness of the 
+resulting clusters. The choice of 20 components provides sufficient expressiveness for 
+downstream prediction while substantially reducing the dimensionality of the feature 
+space. 
+43 
+ 
+The final output is a matrix of dimension (T × 20), where each row represents the 
+reduced embedding for a singl e hourly timestamp. These 20 embedding dimensions, 
+combined with the 14 topic count features, yield 34 news-derived features per parameter 
+combination. 
+3.4.6 Feature Integration & Scaling 
+The complete feature matrix integrates baseline features with news -derived features to 
+produce the input representation for predictive modelling. Table XX summarises the 
+complete feature set: 
+Feature Category Count Description 
+Price Features 2 Day-ahead price, spot price 
+Spread Features 1 Absolute spread 
+Load Features 1 System load 
+Lagged Features 4 24h and 168h lags for price and load 
+Temporal Features 5 Hour, day of week, day/week/month of year 
+Topic Features 14 Time-decayed counts per leaf topic 
+Embeddings Features 20 UMAP-reduced embedding dimensions 
+ 
+The news-derived features (34 dimensions) account for approximately 72% of the total 
+feature space, reflecting the research focus on extracting predictive signal s from textual 
+information. 
+News-derived features exhibit different scales and distributions compared to baseline 
+features. To prevent scale -dependent biases in model training, StandardScaler 
+normalisation is applied to the news features: 
+xscaled = x − μ
+σ  
+where $ \mu$ and $ \sigma$ are the mean and standard deviation computed from the 
+training set. Critically, scaling parameters are fitted exclusively on training data and 
+subsequently applied to validation and test sets, preventing information leakage from 
+future observations into the feature normalisation. 
+The dataset is partitioned chronologically to preserve the temporal ordering essential for 
+time-series forecasting: 
+• Training Set: First 70% of observations 
+• Validation Set: Next 20% of observations 
+• Test Set: Final 10% of observations 
+44 
+ 
+This temporal split ensures that all test set observations occur strictly after all training 
+observations, reflecting the realistic constraint that forecasting models cannot access 
+future information. The validation set serves for hyperparameter tuning and  time-decay 
+parameter selection, while the test set provides an unbiased estimate of out -of-sample 
+performance SOURCE. 
+3.5 Model Training and Optimisation 
+TO BE ADDED AGAIN LATER 
+3.6 Model Evaluation Framework 
+This section details the evaluation methodology employed to assess the performance of 
+the trained models on held-out test data. Building upon the training procedures 
+described in Section 3.5, the evaluation framework quantifies predictive accuracy 
+through classification metrics and establishes statistical significance of performance 
+differences between the signal-enriched and baseline models. 
+Out-of-Sample Evaluation 
+**Purpose:** Establish the rigorous temporal separation between training/validation 
+and test sets, ensuring unbiased performance estimates. 
+- Reiterate the chronological split: 70% train / 20% validation / 10% test (first 
+introduced in Section 3.4.6) 
+- Emphasise that the test set remains completely untouched during all model 
+development, hyperparameter tuning, and feature parameter selection 
+- Explain the rationale for temporal splitting in time-series contexts—standard random 
+splits would introduce look-ahead bias by allowing the model to learn from future 
+observations (Tashman, 2000) 
+- Note that all preprocessing parameters (scalers, UMAP transformations) were fitted 
+exclusively on training data to prevent information leakage 
+- Describe the evaluation procedure: final models (signal and baseline LightGBM 
+classifiers) are applied to test set features to generate predictions, which are then 
+compared against ground-truth labels 
+Classification Performance Metrics 
+45 
+ 
+- **Accuracy**: Proportion of correctly classified observations; interpretable but 
+potentially misleading under class imbalance 
+  - Formula: $\text{Accuracy} = \frac{\text{TP} + \text{TN}}{N}$ 
+- **Macro-Averaged F1 Score**: Harmonic mean of precision and recall, averaged 
+equally across all three classes regardless of prevalence 
+  - Formula: $F1_{\text{macro}} = \frac{1}{K} \sum_{c=1}^{K} \frac{2 \cdot 
+\text{Precision}_c \cdot \text{Recall}_c}{\text{Precision}_c + \text{Recall}_c}$ 
+  - Rationale: Ensures minority class performance receives equal weight in evaluation, 
+critical for trading where signals across all market conditions matter (Sokolova & 
+Lapalme, 2009) 
+- **Multiclass AUC-ROC**: Area under the receiver operating characteristic curve, 
+computed using one-versus-one (OvO) averaging 
+  - Measures the model's ability to discriminate between classes across all probability 
+thresholds 
+  - OvO averaging computes AUC for each pair of classes and averages the results, 
+providing a robust multiclass extension (Hand & Till, 2001) 
+- **Precision per class**: Proportion of predicted positives that are true positives 
+- **Recall per class**: Proportion of actual positives correctly identified 
+- **Confusion matrix**: Full breakdown of predictions versus ground truth to identify 
+systematic misclassification patterns 
+Statistical Significance Testing 
+**Purpose:** Establish whether observed performance differences between models are 
+statistically meaningful or could arise from sampling variation. 
+- **Rationale**: McNemar's test (1947) is designed for comparing two classifiers on 
+the same dataset by analysing the contingency table of correct/incorrect predictions 
+- **Contingency table structure**: 
+  - Both models correct 
+46 
+ 
+  - Only signal model correct 
+  - Only baseline model correct 
+  - Both models wrong 
+- **Test statistic**: $\chi^2 = \frac{(|b - c| - 1)^2}{b + c}$ where $b$ = signal correct 
+& baseline wrong, $c$ = baseline correct & signal wrong 
+- **Interpretation**: A significant p-value (< 0.05) indicates the models perform 
+differently beyond chance; the direction of improvement is determined by comparing 
+$b$ and $c$ 
+- **Advantages over independent-sample tests**: McNemar's test accounts for the 
+paired nature of predictions on the same instances, providing greater statistical power 
+(Dietterich, 1998) 
+- **Method**: Non-parametric bootstrap resampling (Efron & Tibshirani, 1993) to 
+estimate uncertainty around point estimates 
+- **Procedure**: 
+  1. Resample test set observations with replacement (n = 1,000 iterations) 
+  2. Compute metric (accuracy, F1, etc.) on each bootstrap sample 
+  3. Calculate percentile-based confidence intervals (2.5th and 97.5th percentiles for 
+95% CI) 
+- **Interpretation**: Non-overlapping confidence intervals between models provide 
+additional evidence of meaningful performance differences 
+- **Advantages**: Distribution-free method that makes no assumptions about the 
+underlying metric distribution 
+- Report point estimates alongside 95% confidence intervals 
+- Indicate statistical significance levels: * (p < 0.05), ** (p < 0.01), *** (p < 0.001) 
+- Present both signal and baseline model results to enable direct comparison 
+ 
+47 
+ 
+3.7 Backtesting Framework 
+LOL 
+This section details the backtesting methodology employed to translate model 
+predictions into simulated trading outcomes and evaluate economic performance. While 
+Section 3.6 assessed predictive accuracy through classification metrics, this section 
+evaluates the practical utility of the signal-generating pipeline by simulating trading 
+execution on held-out test data and comparing performance against benchmark 
+strategies. 
+3.7.1 Trading Strategy Specification 
+**Purpose:** Define how model predictions are translated into executable trading 
+actions and establish the benchmark strategies for comparison. 
+- **Action mapping**: Model predictions (Long/Neutral/Short) are translated directly 
+into trading positions: 
+  - **Long (+1)**: Buy at day-ahead auction, sell at intraday spot — profits when spot 
+> day-ahead 
+  - **Short (−1)**: Sell at day-ahead auction, buy at intraday spot — profits when spot 
+< day-ahead 
+  - **Neutral (0)**: No position taken — neither profit nor loss 
+- **Signal generation process** (two-stage pipeline): 
+  1. XGBoost base model generates calibrated probability estimates for spread direction 
+  2. LightGBM meta-learner refines these into final Long/Neutral/Short signals 
+- Note that the Neutral class serves a risk management function, allowing the model to 
+abstain when prediction confidence is insufficient 
+- Baseline Model Strategy 
+- Uses the price-only LightGBM classifier (without news-derived features) as the 
+baseline 
+- Same action mapping as the signal model 
+- Enables direct comparison of news feature contribution to trading performance 
+48 
+ 
+- Naïve Benchmark Strategy 
+- **Always-long strategy**: Systematically buys at day-ahead auction and sells at 
+intraday spot for every observation 
+- Equivalent to setting action = +1 for all timestamps 
+- Represents a simple market-making approach that profits from average positive 
+spreads but incurs losses during negative spread periods 
+- Provides a lower bound for model utility—if the signal model cannot outperform this 
+naïve strategy, the predictive complexity adds no economic value 
+-  Transaction Cost Modelling 
+- **Fixed costs**: Per-trade fee in EUR/MWh representing exchange fees, clearing 
+costs, and broker commissions 
+- **Proportional costs**: Percentage of trade value representing bid-ask spreads and 
+market impact 
+- Returns computation: 
+  $$R_t = \begin{cases}  
+  \text{spread}_t - c_{\text{fixed}} - c_{\%} \cdot |\text{spread}_t| & \text{if action} = 
++1 \\ 
+  -\text{spread}_t - c_{\text{fixed}} - c_{\%} \cdot |\text{spread}_t| & \text{if action} 
+= -1 \\ 
+  0 & \text{if action} = 0 
+  \end{cases}$$ 
+- Note that transaction costs are only incurred when positions are taken (Long or Short), 
+not for Neutral signals 
+Performance Metrics 
+**Purpose:** Define the economic performance metrics used to evaluate trading 
+strategy outcomes. 
+- **Total Return**: Cumulative profit/loss over the test period in EUR/MWh 
+49 
+ 
+  $$\text{Total Return} = \sum_{t=1}^{T} R_t$$ 
+- **Average Return**: Mean return per period, indicating expected profit per trade 
+  $$\bar{R} = \frac{1}{T} \sum_{t=1}^{T} R_t$$ 
+- **V olatility**: Standard deviation of returns, measuring return dispersion 
+  $$\sigma = \sqrt{\frac{1}{T-1} \sum_{t=1}^{T} (R_t - \bar{R})^2}$$ 
+- **Sharpe Ratio** (annualised): Return per unit of total risk, the standard risk-adjusted 
+performance measure (Sharpe, 1966) 
+  $$\text{Sharpe} = \frac{\bar{R}}{\sigma} \cdot \sqrt{N_{\text{periods/year}}}$$ 
+  where $N_{\text{periods/year}} = 24 \times 365 = 8{,}760$ for hourly data 
+- **Sortino Ratio** (annualised): Return per unit of downside risk, penalising only 
+negative volatility (Sortino & van der Meer, 1991) 
+  $$\text{Sortino} = \frac{\bar{R}}{\sigma_{\text{downside}}} \cdot 
+\sqrt{N_{\text{periods/year}}}$$ 
+  where $\sigma_{\text{downside}}$ is computed only from negative returns 
+  - Rationale: Upside volatility is desirable in trading; Sortino isolates harmful downside 
+risk 
+- **Maximum Drawdown**: Largest peak-to-trough decline in cumulative returns 
+  $$\text{MDD} = \min_t \left( \text{Cumulative}_t - \max_{s \leq t} 
+\text{Cumulative}_s \right)$$ 
+  - Measures worst-case capital erosion during the strategy's lifetime 
+  - Critical for assessing tail risk and capital requirements 
+- **Win Rate**: Percentage of profitable trades among all executed trades 
+  $$\text{Win Rate} = \frac{\text{Number of } R_t > 0}{\text{Number of } R_t \neq 0} 
+\times 100\%$$ 
+- **Number of Trades**: Total count of non-zero positions (Long + Short signals) 
+  - Lower trade counts with similar returns indicate more efficient signal generation 
+50 
+ 
+  - Sharpe and Sortino ratios normalise for risk, enabling fair comparison 
+  - Maximum drawdown indicates worst-case scenarios that may be unacceptable 
+regardless of average returns 
+-  Equity Curve Visualisation 
+- Plot cumulative returns over time for all strategies 
+- Enables visual identification of: 
+  - Periods of sustained outperformance/underperformance 
+  - Regime changes where model effectiveness varies 
+  - Drawdown events and recovery patterns 
+- Sensitivity Analysis (Optional Extension) 
+- Evaluate performance under varying transaction cost assumptions 
+- Test robustness of strategy ranking to cost parameter changes 
+- Identify break-even transaction costs where model loses edge over naïve benchmark 
+  
+51 
+ 
+4 Results 
+The subsequent chapter is devoted to the presentation of the empirical results of the 
+analysis and the evaluation of the performance of the proposed news -augmented 
+modelling framework. The results obtained are structured in accordance with the 
+sequential stages of the research design. 
+Section 4.1 provides a comprehensive overview of the finalised dataset, accompanied by 
+a detailed exposition of the descriptive statistics pertaining to the energy market variables, 
+the news corpus, and the target variable employed for the classification p rocess. In 
+Section 4.2, the outcomes of the feature engineering process are examined, including the 
+results of zero-shot topic classification, embedding diagnostics, and the selection of time-
+decay and dimensionality -reduction parameters. Section 4.3 evalu ates the predictive 
+performance of the proposed models by comparing news -augmented specifications with 
+baseline benchmarks using statistical accuracy measures and formal significance tests. 
+Finally, Section 4.4 assesses the economic relevance of the derive d signals through 
+backtesting, reporting risk -adjusted performance metrics and drawdown characteristics 
+under realistic transaction cost assumptions. 
+ 
+4.1 Data Overview and Descriptive Statistics 
+• Summary of the final dataset: 113,894 news articles and 43,798 hourly energy 
+records after preprocessing 
+• Target variable distribution: class imbalance with ~45.6% Short, ~43.3% Long, 
+and ~11.1% Neutral signals (using 3.0 EUR/MWh deadband) 
+• Temporal coverage and news source composition (top sources contributing to the 
+corpus) 
+• News volume patterns across hours/days show coverage gaps and peaks 
+The final dataset used for the empirical analysis consists of 141’716 news articles and 
+43’798 hourly observations of the German electricity market after all preprocessing, 
+filtering, and alignment steps. These observations form the basis for the descriptive 
+analysis and the subsequent evaluation of the forecasting and trading models. 
+Using a symmetric deadband of ±3.0 EUR/MWh to discretise the next -day spot–day-
+ahead price spread, the resulting class distribution is moderately imbalanced. 

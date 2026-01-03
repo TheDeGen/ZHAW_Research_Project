@@ -1,170 +1,117 @@
-# 3.4 Feature Engineering
+# Section 3.4 Feature Engineering — Condensed Rewrite
 
-The feature engineering process transforms raw energy market data and preprocessed news articles into a structured feature matrix suitable for predictive modelling. This section details the construction of baseline features derived from electricity market fundamentals, the extraction of topical signals through zero-shot classification, the generation of semantic embeddings from news text, and the temporal aggregation of these news-derived features using exponential decay weighting. The resulting feature set integrates both quantitative market dynamics and qualitative information encoded in news discourse, thereby enabling the model to capture the complex interplay between market fundamentals and information flows that characterise short-term electricity price movements.
+## Analysis Summary
 
-## 3.4.1 Baseline Features
+**Original length estimate:** ~3,500 words (pages 34–43)  
+**Target length:** ~2,450 words (~30% reduction)  
+**Key reductions:**
+- Removed NLI/entailment theory (already in Section 2.2.2)
+- Removed DeBERTa architecture details (already in Section 2.2.2)
+- Removed MiniLM/knowledge distillation theory (already in Section 2.2.2)
+- Removed UMAP theory (already in Section 2.2.2)
+- Removed time-decay theoretical motivation (already in Section 2.3)
+- Consolidated repetitive procedural descriptions
+- Updated parameters to reflect current implementation (11 categories, 21 leaf topics)
 
-The baseline feature set comprises variables derived directly from the energy market data described in Section 3.3.2. These features capture the fundamental supply-demand dynamics that drive electricity price formation, as well as temporal patterns that reflect the cyclical nature of electricity consumption.
+---
 
-**Price and Spread Features.** The primary price variables include the day-ahead auction price (EUR/MWh) and the intraday spot price (EUR/MWh), both resampled to hourly frequency. The absolute spread between these prices, computed as the difference between spot and day-ahead values, serves as the basis for the target variable. This spread reflects the deviation between anticipated and realised market conditions, capturing the information advantage that accrues between the day-ahead auction close and real-time delivery.
+## Condensed Section 3.4: Feature Engineering
 
-**Generation and Load Features.** Aggregate electricity generation and total system load (MW) provide direct measures of supply-demand balance. As discussed in Section 2.1.4, the merit-order effect implies that price formation depends critically on the marginal generating unit dispatched to meet demand. Aggregate load serves as a proxy for demand pressure, where higher consumption during peak periods typically elevates prices by requiring dispatch of higher-cost thermal generation (Edwards, 2023, p. 135).
+The feature engineering process transforms raw energy market data and preprocessed news articles into a structured feature matrix suitable for predictive modelling. This section details the construction of baseline features, the extraction of topical signals via zero-shot classification, the generation of semantic embeddings, and their temporal aggregation using exponential-decay weighting.
 
-**Lagged Features.** To capture autocorrelation structures inherent in electricity prices and demand patterns, lagged values of key variables are incorporated at two horizons: 24 hours (daily cycle) and 168 hours (weekly cycle). Specifically, the feature set includes `price_lag_24`, `price_lag_168`, `load_lag_24`, and `load_lag_168`. These lags reflect the strong diurnal and weekly seasonality documented in electricity market research, where demand patterns exhibit pronounced differences between weekdays and weekends, and between daytime peak hours and overnight off-peak periods (Weron, 2014, p. 1035).
+### 3.4.1 Baseline Features
 
-**Temporal Features.** Categorical and cyclical time indicators encode the position of each observation within relevant periodic structures:
-- `hour` (0–23): Captures intraday variation aligned with consumption patterns
+The baseline feature set comprises variables derived directly from the energy market data described in Section 3.2.2, capturing the fundamental supply–demand dynamics and temporal patterns that drive electricity price formation.
+
+**Price and Spread Features:** The primary price variables are the day-ahead auction price and the intraday spot price (both EUR/MWh), resampled at hourly frequency. The spread between these prices—computed as the difference between spot and day-ahead values—serves as the **target variable** for classification. Observations are labelled as **Long** (positive spread, spot > day-ahead), **Short** (negative spread, spot < day-ahead), or **Neutral** when the absolute spread falls within a symmetric deadband of ±3.0 EUR/MWh. This three-class formulation captures the directional trading opportunity whilst accounting for periods where price differences are insufficient to justify position-taking after transaction costs.
+
+**Generation and Load Features:** Aggregate electricity generation and total system load (MW) provide direct measures of supply–demand balance. As discussed in Section 2.1.4, the merit-order effect implies that price formation depends critically on the marginal generating unit dispatched to meet demand.
+
+**Lagged Features:** To capture autocorrelation in electricity prices and demand patterns, lagged values are included at two horizons: 24 hours and 168 hours (one week). Specifically, the feature set contains `price_lag_24`, `price_lag_168`, `load_lag_24`, and `load_lag_168`. These lags reflect the strong daily and weekly seasonality in electricity consumption patterns discussed in Section 2.1.4, where demand exhibits pronounced differences between weekdays and weekends and between daytime peak hours and overnight off-peak periods.
+
+**Temporal Features:** Categorical and cyclical time indicators encode the position of each observation within relevant periodic structures:
+- `hour` (0–23): Captures intraday variation
 - `day_of_week` (0–6): Distinguishes weekday from weekend dynamics
-- `day_of_year` (1–365): Encodes annual seasonal effects, including heating and cooling demand
+- `day_of_year` (1–366): Encodes annual seasonal effects
 - `week_of_year` (1–52): Provides coarser seasonal resolution
-- `month` (1–12): Captures broader seasonal trends in renewable generation and demand
+- `month` (1–12): Captures broader seasonal trends
 
-Together, these 13 baseline features establish a foundation that reflects the structural characteristics of electricity markets prior to the incorporation of news-derived signals.
+Together, these 13 baseline features establish a foundation that captures the structural characteristics of electricity markets before the incorporation of news-derived signals.
 
-## 3.4.2 Topic Classification via Zero-Shot Learning
+### 3.4.2 Topic Classification via Zero-Shot Learning
 
-The transformation of news articles into structured topical features proceeds through a zero-shot classification pipeline that assigns each article to predefined energy-relevant categories without requiring task-specific training data. This approach leverages the semantic generalisation capabilities of large language models, enabling classification across diverse topic labels based solely on natural language descriptions (Yin et al., 2019, pp. 1–2).
+News articles are transformed into structured topical features via a zero-shot classification pipeline that assigns each article to predefined energy-relevant categories derived from Section 2.1. This approach leverages the semantic generalisation capabilities of NLI-based models, as discussed in Section 2.2.2, enabling classification without task-specific training data (Yin et al., 2019).
 
-**Model Selection.** The classification pipeline employs the `mDeBERTa-v3-base-xnli-multilingual-nli-2mil7` model developed by Laurer et al. (2022, 2023), which extends Microsoft's DeBERTa-v3 architecture (He et al., 2023) to multilingual zero-shot classification. DeBERTa-v3 improves upon earlier transformer architectures through disentangled attention mechanisms that separately encode content and position information, combined with ELECTRA-style replaced token detection during pre-training, achieving state-of-the-art performance on natural language understanding benchmarks (He et al., 2023, pp. 1–2).
+The classification employs the mDeBERTa-v3-base-xnli-multilingual-nli-2mil7 model (Laurer et al., 2024), using the hypothesis template: *"Der Artikel handelt von: {label}."*
 
-The selected model was fine-tuned on the Cross-Lingual Natural Language Inference (XNLI) dataset and the multilingual-NLI-26lang-2mil7 corpus, comprising over 2.7 million hypothesis-premise pairs across 27 languages. This training enables the model to perform natural language inference across 100 languages, achieving accuracy scores between 79.4% and 87.1% on the XNLI test set (Laurer et al., 2023). The multilingual capability is essential for processing German-language news content whilst benefiting from the broader linguistic patterns learned during pre-training on diverse language data.
-
-Zero-shot classification through NLI operates by reformulating the classification task as textual entailment (Yin et al., 2019). For each candidate label, the model evaluates whether a hypothesis constructed from the label is entailed by the input text (premise). The hypothesis template employed is:
-
-> "Der Artikel handelt von: {label}."
-> (English: "The article is about: {label}.")
-
-The model outputs entailment probabilities for each label, with the highest-probability label assigned as the classification. This formulation enables flexible classification across arbitrary label sets without retraining, a property particularly valuable when domain-specific labelled data are scarce or costly to obtain (Laurer et al., 2022, p. 2).
-
-**Hierarchical Classification Taxonomy.** The topic taxonomy was designed to capture the primary drivers of electricity price variation identified in Section 2.1.4, organised into a two-stage hierarchical structure that balances classification precision with computational efficiency. The first stage routes articles to one of seven high-level categories, while the second stage assigns articles to specific leaf topics within the selected category.
-
-The seven high-level categories reflect distinct channels through which news content may influence electricity prices:
-
-1. **Nachfrage (Demand)**: News affecting electricity consumption levels
-2. **Angebot (Supply)**: News concerning generation capacity and availability
-3. **Brennstoffpreise (Fuel Prices)**: News on input costs for thermal generation
-4. **Makrofinanzen (Macro Finance)**: Broader economic conditions affecting markets
-5. **Geopolitik (Geopolitics)**: International developments impacting energy supply
-6. **Wetter (Weather)**: Meteorological conditions influencing demand and renewable output
-7. **Sonstiges (Other)**: Articles lacking clear energy market relevance
-
-This categorisation draws on the supply and demand factors discussed in Section 2.1.4, where fuel prices, weather conditions, and geopolitical developments were identified as key determinants of electricity price dynamics. Within each high-level category, more granular leaf topics capture directional implications for electricity prices. The complete taxonomy comprises 14 leaf topics:
+**Hierarchical Taxonomy:** The topic structure comprises eleven high-level categories reflecting distinct channels through which news may influence electricity prices. Each category (except "Sonstiges") contains two directionally opposed leaf topics—one representing conditions that would exert upward pressure on prices, and one representing conditions that would ease prices—enabling the model to capture both topical relevance and implied price impact direction:
 
 | Category | Leaf Topics |
 |----------|-------------|
-| Nachfrage | Electricity consumption in Germany rising; Electricity consumption in Germany falling |
-| Angebot | Wind and solar generation rising; Wind and solar generation falling; Grid or plant outages reducing supply; Expansion of LNG terminals, pipelines, or plants increasing supply |
-| Brennstoffpreise | Wholesale gas prices rising; Wholesale gas prices falling |
-| Makrofinanzen | Rising interest rates or high inflation tightening markets; Falling interest rates or easing inflation calming markets |
-| Geopolitik | Geopolitical tensions or sanctions exacerbating energy supply; Geopolitical détente or lifted sanctions reducing supply risks |
-| Wetter | Cold, calm, or overcast conditions increasing price pressure; Mild weather, strong wind, or sunshine easing prices |
-| Sonstiges | No relevance to energy, weather, or financial markets |
+| Nachfrage (Stromverbrauch) | Rising consumption (economic activity/extreme weather); Falling consumption (weak economy/mild weather) |
+| Angebot (Erzeugung & Infrastruktur) | Plant outages/grid constraints/low renewables; High renewables/new capacity/stable grids |
+| Brennstoffpreise | Rising gas, coal, or CO₂ prices; Falling gas, coal, or CO₂ prices |
+| Wetter | Cold, calm, or overcast conditions; Mild weather, strong wind, or sunshine |
+| Wirtschaft & Konjunktur | Positive economic development; Recession or declining production |
+| Finanzmärkte & Geldpolitik | Interest rate decisions/inflation; Stock market news/investments |
+| Handel & Außenwirtschaft | Tariffs/trade conflicts; Trade agreements/market opening |
+| Geopolitik & Konflikte | War/sanctions/geopolitical tensions; Peace talks/diplomacy |
+| Technologie & Industrie | Technology development; Industrial policy |
+| Politik & Regulierung | Energy policy/climate legislation; Domestic politics/elections |
+| Sonstiges | Sports, entertainment, or local news without economic relevance |
 
-The directional framing of leaf topics (rising/falling, increasing/decreasing) enables the model to capture not merely topical relevance but also the implied price impact direction, which is critical for generating actionable trading signals. It should be noted that certain factors relevant to electricity price formation, such as carbon prices under the EU Emissions Trading System (EU ETS) and cross-border interconnector flows, are not explicitly represented in this taxonomy. These omissions reflect the focus on factors most directly captured in German-language news discourse and represent a limitation of the current approach.
+This yields 21 leaf topics across the eleven categories.
 
-**Routing Logic and Confidence Thresholds.** The hierarchical classification proceeds through two inference stages with confidence-based fallback logic to handle ambiguous cases. Each article's title is processed against the seven category labels using the zero-shot pipeline. The model returns probability scores reflecting the confidence of each category assignment. If the highest-scoring category exceeds the Stage 1 threshold (τ₁ = 0.35), the article proceeds to Stage 2 classification within that category; otherwise, it is routed to the fallback category ("Sonstiges").
+**Two-Stage Classification Procedure:** Each article's title is first classified against the eleven category labels. If the highest-scoring category exceeds the Stage 1 threshold (τ₁ = 0.25), the article proceeds to Stage 2 classification within that category; otherwise, it is routed to "Sonstiges." In Stage 2, a threshold of τ₂ = 0.20 governs whether the specific leaf topic is retained. Articles initially classified as "Sonstiges" undergo secondary classification using the article description, providing a fallback for ambiguous headlines.
 
-Within the assigned category, the article is classified against the corresponding leaf topics. If the selected category contains multiple leaf topics, a second inference pass determines the specific topic. A Stage 2 threshold (τ₂ = 0.25) governs whether the leaf assignment is retained or whether the article falls back to the default "other" topic.
+The threshold values were determined through manual inspection of classification score distributions, balancing coverage against precision (Laurer et al., 2024). Articles ultimately classified as having no energy relevance are excluded from subsequent aggregation.
 
-Articles initially classified as "Sonstiges" (no energy relevance) undergo a secondary classification using the article description rather than the title. This fallback addresses cases where headlines are ambiguous but article summaries provide clearer topical signals. The reclassified results replace the initial "other" assignment where a more specific topic achieves sufficient confidence.
+### 3.4.3 Sentence Embedding Generation
 
-The threshold values (τ₁ = 0.35, τ₂ = 0.25) were determined through manual inspection of classification score distributions, balancing the trade-off between coverage (retaining more articles in specific categories) and precision (avoiding misclassification of ambiguous content), following the calibration approach discussed by Laurer et al. (2022). Lower Stage 2 thresholds reflect the observation that within-category classification tends to produce lower absolute confidence scores due to the semantic similarity among leaf topics within the same category.
+Complementing discrete topic classification, dense sentence embeddings capture semantic information that predefined categories may not fully represent. As introduced in Section 2.2.2, sentence embeddings encode the full semantic content of text as continuous vectors, preserving nuanced information beyond what discrete labels can express.
 
-**Classification Distribution.** The zero-shot classification pipeline was applied to the preprocessed news corpus of 149,512 articles. Table X presents the distribution of articles across leaf topics, illustrating the topical composition of the dataset.
+The embedding pipeline employs the paraphrase-multilingual-MiniLM-L12-v2 model (Reimers & Gurevych, 2019), generating 384-dimensional vector representations optimised for semantic similarity across 50+ languages including German. For each article, the embedding is computed from the title using mean pooling over contextualised token representations, prioritising computational efficiency while capturing primary informational content.
 
-[TABLE: Distribution of articles across 14 leaf topics - to be populated with actual results]
+### 3.4.4 Time-Decay Aggregation of News Features
 
-Articles classified as having no energy relevance are excluded from subsequent time-decay aggregation, ensuring that the news-derived features reflect only content with plausible market relevance. This filtering step is essential given the broad keyword-based collection strategy employed during data sourcing, which inevitably captured some off-topic content despite the preprocessing refinements described in Section 3.3.1.
+Individual article-level features must be aggregated to the hourly resolution of the energy market data. The aggregation employs exponential time-decay weighting, assigning greater influence to recent articles while retaining diminishing contributions from older content. This reflects the intuition that news impact decays as information is absorbed into prices (Tetlock, 2007; Li et al., 2021).
 
-## 3.4.3 Sentence Embedding Generation
-
-Complementing the discrete topical classification, dense sentence embeddings capture semantic information that may not be fully represented by predefined topic categories. While zero-shot classification assigns articles to discrete labels, embeddings encode the full semantic content of article text as continuous vectors, preserving nuanced information that could inform price predictions.
-
-**Model Architecture.** The embedding pipeline employs the `paraphrase-multilingual-MiniLM-L12-v2` model from the Sentence Transformers library (Reimers & Gurevych, 2019). This model generates 384-dimensional dense vector representations optimised for semantic similarity tasks across 50+ languages including German.
-
-The architecture builds upon the MiniLM knowledge distillation framework (Wang et al., 2020), which compresses larger transformer models while preserving most of their representational capacity. MiniLM achieves this compression by training a smaller student model to mimic the self-attention distributions of a larger teacher model, yielding compact models suitable for large-scale text processing without substantial performance degradation.
-
-The multilingual capability derives from the training procedure described by Reimers and Gurevych (2020), which extends monolingual sentence embeddings to multiple languages through knowledge distillation on parallel corpora. A fixed English teacher model produces target embeddings, while the student model learns to map both English text and its translations to the same vector representation. This approach ensures that semantically equivalent content in different languages maps to similar positions in the embedding space.
-
-**Embedding Computation.** For each news article, the embedding is computed from the article title using mean pooling over the contextualised token representations produced by the final transformer layer. Titles were selected over full article text for computational efficiency and because headlines typically convey the primary informational content relevant to rapid market reactions. However, this approach may lose nuanced information contained in article bodies, representing a trade-off between computational tractability and information completeness.
-
-The output of this stage is a 384-dimensional embedding vector for each article, stored alongside the article metadata for subsequent temporal aggregation.
-
-## 3.4.4 Time-Decay Aggregation of News Features
-
-Individual article-level classifications and embeddings must be aggregated to the hourly resolution of the energy market data to enable joint modelling. The aggregation procedure employs exponential time-decay weighting, which assigns greater influence to more recent articles while retaining diminishing contributions from older content within a lookback window. This approach reflects the intuition that news impact on market expectations decays over time as information is absorbed and superseded by subsequent developments.
-
-**Theoretical Motivation.** The application of exponential decay weighting to news signals draws on established practices in financial forecasting and time-series analysis. Tetlock (2007) demonstrated that media content influences investor sentiment and stock returns, with the effect diminishing over subsequent trading days as information is incorporated into prices. Taylor (2008) proposed exponentially weighted information criteria for model selection, arguing that recent observations should receive greater weight to reflect current forecast accuracy. In commodity markets, Li and Wang (2021) demonstrated that incorporating time-decayed news sentiment significantly improves crude oil price forecasting, with the decay parameter governing the effective memory horizon of the model. Gianfreda and Grossi (2012) showed that forecast errors in electricity markets exhibit time-varying patterns that can be modelled through weighted aggregation schemes.
-
-Within electricity markets specifically, the high-frequency nature of price dynamics and the rapid incorporation of information suggest that news relevance diminishes relatively quickly. Forecast revisions for renewable generation, updates to plant availability, and shifts in demand expectations are continuously reflected in intraday trading, implying that older news articles provide progressively less marginal information (Weron, 2014, p. 1031).
-
-The exponential decay formulation provides a parsimonious representation of this information decay:
+The exponential decay formulation is:
 
 $$w_i = e^{-\lambda \cdot h_i}$$
 
-where $w_i$ is the weight assigned to article $i$, $\lambda$ is the decay rate parameter, and $h_i$ is the number of hours elapsed since article $i$ was published. Higher values of $\lambda$ produce faster decay, concentrating influence on very recent articles, while lower values extend the effective memory horizon, allowing older articles to retain meaningful weight.
+where $w_i$ is the weight assigned to article $i$, $\lambda$ is the decay rate, and $h_i$ is the hours elapsed since publication.
 
-**Topic Count Aggregation.** For each hourly timestamp in the energy dataset, time-decayed weighted counts are computed for each of the 14 leaf topics. The aggregation proceeds as follows:
+**Topic Aggregation:** For each hourly timestamp $t$, time-decayed weighted counts are computed for each of the 20 leaf topics (excluding "Sonstiges"):
 
-1. **Define Lookback Window.** For timestamp $t$, identify all articles published within the interval $(t - L, t]$, where $L$ is the lookback window in hours.
+1. Define lookback window: identify articles published within $(t - L, t]$
+2. Compute decay weights: $w_i = e^{-\lambda \cdot h_i}$ for each article
+3. Aggregate by topic: $\text{topic\_count}_k(t) = \sum_{i \in \text{topic } k} w_i$
 
-2. **Compute Decay Weights.** For each article $i$ in the window, calculate the decay weight $w_i = e^{-\lambda \cdot h_i}$, where $h_i = t - t_i$ is the hours since publication.
+The output is a matrix of dimension $(T \times 20)$, where each column represents the time-decayed count for a given topic.
 
-3. **Aggregate by Topic.** For each topic $k$, compute the weighted count:
-$$\text{topic\_count}_k(t) = \sum_{i \in \text{topic } k} w_i$$
+**Embedding Aggregation:** Time-decayed embedding aggregation follows a similar procedure using weighted vector averages:
 
-4. **Filter Irrelevant Articles.** Articles classified as "Sonstiges" (no energy relevance) are excluded from the aggregation, ensuring that topic features reflect only energy-relevant news content.
-
-The output is a matrix of dimension $(T \times 14)$, where $T$ is the number of hourly timestamps and each column represents the time-decayed count for one topic. This aggregation preserves the interpretability of topical features: higher values indicate greater recent news volume on that topic, weighted by recency. The directional framing of topics (e.g., "gas prices rising" vs. "gas prices falling") enables the model to distinguish between news flows with opposing price implications.
-
-**Embedding Aggregation.** Time-decayed aggregation of embeddings follows a similar procedure, with the key difference that vector averages replace scalar sums:
-
-1. **Define Lookback Window.** Identify articles within $(t - L, t]$ for each timestamp $t$.
-
-2. **Compute Decay Weights.** Calculate $w_i = e^{-\lambda \cdot h_i}$ for each article.
-
-3. **Weighted Average Embedding.** Compute the aggregated embedding as:
 $$\mathbf{e}_{\text{agg}}(t) = \frac{\sum_i w_i \cdot \mathbf{e}_i}{\sum_i w_i}$$
 
-where $\mathbf{e}_i$ is the 384-dimensional embedding vector for article $i$.
+If no articles fall within the lookback window, the aggregated embedding is set to zero. The output is a matrix of dimension $(T \times 384)$.
 
-The weighted average ensures that the aggregated embedding lies within the convex hull of individual article embeddings, preserving semantic interpretability. If no articles fall within the lookback window for a given timestamp, the aggregated embedding is set to zero, indicating the absence of relevant news content. The output is a matrix of dimension $(T \times 384)$, representing the time-decayed average semantic content of recent news at each timestamp.
+**Parameter Selection:** The lookback window ($L$) and decay rate ($\lambda$) jointly determine the temporal dynamics of news feature aggregation. Shorter lookback windows with higher decay rates capture rapid, short-term news effects, while longer windows with lower decay rates smooth over transient fluctuations. Given uncertainty regarding optimal values, a grid search across multiple parameter combinations is employed, with the optimal combination selected through the model validation procedure described in Section 3.5.
 
-**Parameter Selection.** The lookback window ($L$) and decay rate ($\lambda$) jointly determine the temporal dynamics of news feature aggregation. Shorter lookback windows with higher decay rates capture rapid, short-term news effects, while longer windows with lower decay rates smooth over transient fluctuations to capture more persistent trends.
+### 3.4.5 Dimensionality Reduction of Aggregated Embeddings
 
-Given the uncertainty regarding optimal parameter values, a grid search approach is employed across a range of parameter combinations:
+The 384-dimensional time-decayed embedding vectors pose challenges for downstream modelling due to high dimensionality and overfitting risk. UMAP, introduced in Section 2.2.2, is employed for dimensionality reduction, offering superior scalability and global structure preservation compared to alternatives (McInnes et al., 2020).
 
-| Parameter | Values Tested |
-|-----------|---------------|
-| Lookback Window ($L$) | 24, 48, 72, 168, 336, 504 hours |
-| Decay Lambda ($\lambda$) | 0.01, 0.05, 0.1, 0.25, 0.5 |
+The UMAP configuration employs:
+- `n_components` = 20: reducing dimensionality by a factor of approximately 19
+- `n_neighbors` = 15: balancing local and global structure preservation
+- `min_dist` = 0.1: controlling clustering tightness
 
-This yields 30 parameter combinations, each producing a distinct set of time-decayed topic and embedding features. The optimal combination is selected through the model validation procedure described in Section 3.5, which evaluates downstream prediction performance across the parameter grid.
+The output is a matrix of dimension $(T \times 20)$. These 20 embedding dimensions, combined with the 20 topic count features, yield **40 news-derived features** per parameter combination.
 
-The default parameters ($L = 336$ hours, $\lambda = 0.05$) reflect a two-week lookback with moderate decay, balancing responsiveness to recent news against stability from a broader temporal context. With $\lambda = 0.05$, an article published 24 hours ago retains approximately 30% of its initial weight ($e^{-0.05 \times 24} \approx 0.30$), while an article from one week ago (168 hours) retains only about 0.02% ($e^{-0.05 \times 168} \approx 0.0002$).
+### 3.4.6 Feature Integration
 
-## 3.4.5 Dimensionality Reduction of Aggregated Embeddings
-
-The 384-dimensional time-decayed embedding vectors present challenges for downstream modelling due to the curse of dimensionality and potential overfitting, particularly given the limited sample size relative to feature dimensionality. Dimensionality reduction techniques project these high-dimensional representations into a lower-dimensional space while preserving essential structure, thereby improving computational efficiency and model generalisation.
-
-The Uniform Manifold Approximation and Projection (UMAP) algorithm (McInnes et al., 2018) serves as the primary dimensionality reduction method. UMAP constructs a topological representation of the high-dimensional data based on fuzzy simplicial sets, then optimises a low-dimensional embedding that preserves this structure. Compared to alternatives such as t-SNE, UMAP offers superior scalability to large datasets and better preservation of global structure, making it well-suited for the continuous semantic spaces produced by transformer embeddings (McInnes et al., 2018, pp. 1–2).
-
-The UMAP configuration employs the following parameters:
-- **n_components = 20**: Target dimensionality, reducing the 384-dimensional input by a factor of approximately 19
-- **n_neighbors = 15**: Local neighbourhood size, controlling the balance between local and global structure preservation
-- **min_dist = 0.1**: Minimum distance between points in the embedding, governing clustering tightness
-
-These parameters follow the guidelines provided by McInnes et al. (2018), where `n_neighbors` values between 10 and 50 are recommended for balancing local and global structure preservation, and `min_dist` values between 0.0 and 0.5 control the tightness of the resulting clusters. The choice of 20 components provides sufficient expressiveness for downstream prediction while substantially reducing feature space dimensionality.
-
-PCA provides a linear alternative that guarantees orthogonal components ordered by variance explained, though it cannot capture the nonlinear manifold structure that UMAP preserves. Empirical comparisons on text embedding tasks suggest that UMAP typically outperforms PCA for preserving semantic clustering structure, though the advantage diminishes for downstream supervised learning tasks where predictive features may not align with variance-maximising directions (Grootendorst, 2022, p. 2).
-
-The final output is a matrix of dimension $(T \times 20)$, where each row represents the reduced embedding for one hourly timestamp. These 20 embedding dimensions, combined with the 14 topic count features, yield 34 news-derived features per parameter combination.
-
-## 3.4.6 Feature Integration and Scaling
-
-The complete feature matrix integrates baseline features with news-derived features, producing the input representation for predictive modelling.
-
-**Feature Summary.** Table X summarises the full feature set:
+The complete feature matrix integrates baseline features with news-derived features:
 
 | Feature Category | Count | Description |
 |------------------|-------|-------------|
@@ -173,58 +120,56 @@ The complete feature matrix integrates baseline features with news-derived featu
 | Load Features | 1 | System load |
 | Lagged Features | 4 | 24h and 168h lags for price and load |
 | Temporal Features | 5 | Hour, day of week, day/week/month of year |
-| Topic Features | 14 | Time-decayed counts per leaf topic |
+| Topic Features | 20 | Time-decayed counts per leaf topic |
 | Embedding Features | 20 | UMAP-reduced embedding dimensions |
-| **Total** | **47** | |
+| **Total** | **53** | |
 
-The news-derived features (34 dimensions) constitute approximately 72% of the total feature space, reflecting the research focus on extracting predictive signal from textual information.
+The news-derived features (40 dimensions) account for approximately 75% of the total feature space, reflecting the research focus on extracting predictive signals from textual information.
 
-**Temporal Split Strategy.** The dataset is partitioned chronologically to preserve the temporal ordering essential for time-series forecasting:
-- **Training Set**: First 70% of observations
-- **Validation Set**: Next 20% of observations
-- **Test Set**: Final 10% of observations
+**Dataset Partitioning:** The dataset is partitioned chronologically:
+- **Training Set:** First 70% of observations
+- **Validation Set:** Next 20% of observations
+- **Test Set:** Final 10% of observations
 
-This temporal split ensures that all test set observations occur strictly after all training observations, reflecting the realistic constraint that forecasting models cannot access future information. The validation set serves for hyperparameter tuning and time-decay parameter selection, while the test set provides an unbiased estimate of out-of-sample performance.
-
-## 3.4.7 Summary
-
-The feature engineering pipeline transforms raw market data and preprocessed news articles into a 47-dimensional feature representation combining:
-1. **Baseline features** capturing electricity market fundamentals and temporal patterns
-2. **Topic features** encoding the thematic content of recent news via zero-shot classification
-3. **Embedding features** capturing semantic information through transformer-based representations
-
-Time-decay aggregation with exponential weighting bridges the article-level news signals to hourly market timestamps, with parameter selection deferred to the model training phase described in Section 3.5. The resulting feature matrix provides a comprehensive representation of both quantitative market dynamics and qualitative information flows, enabling the subsequent modelling stages to exploit the predictive content embedded in energy market news.
+This temporal split ensures test observations occur strictly after training observations, reflecting the realistic constraint that forecasting models cannot access future information.
 
 ---
 
-## References (to be integrated into main bibliography)
+## Change Log
 
-Gianfreda, A., & Grossi, L. (2012). Forecasting Italian electricity zonal prices with exogenous variables. *Energy Economics*, 34(6), 2228-2239.
+| Subsection | Original | Revised | Key Changes |
+|------------|----------|---------|-------------|
+| 3.4 Intro | ~100 words | ~50 words | Removed redundant pipeline overview |
+| 3.4.1 Baseline | ~350 words | ~320 words | Added target variable definition (Long/Short/Neutral with ±3 EUR/MWh deadband); referenced Section 2.1.4 for seasonality |
+| 3.4.2 Topic Classification | ~1,100 words | ~480 words | Removed NLI theory (→ Section 2.2.2), removed DeBERTa architecture details, updated to 11 categories/21 topics, added note on positive/negative leaf pairing |
+| 3.4.3 Embeddings | ~400 words | ~100 words | Simplified to reference Section 2.2.2, kept only model choice and practical details |
+| 3.4.4 Time-Decay | ~800 words | ~380 words | Removed theoretical motivation (→ Section 2.3), removed specific parameter grid values (deferred to Section 3.5) |
+| 3.4.5 Dimensionality | ~350 words | ~150 words | Removed UMAP theory (→ Section 2.2.2), updated feature counts |
+| 3.4.6 Integration | ~400 words | ~200 words | Removed normalisation/StandardScaler section, renamed to "Feature Integration" |
 
-Grootendorst, M. (2022). BERTopic: Neural topic modeling with a class-based TF-IDF procedure. *arXiv preprint arXiv:2203.05794*.
+**Total estimated reduction:** ~35% (from ~3,500 to ~2,250 words)
 
-He, P., Gao, J., & Chen, W. (2023). DeBERTaV3: Improving DeBERTa using ELECTRA-style pre-training with gradient-disentangled embedding sharing. In *Proceedings of ICLR 2023*. https://arxiv.org/abs/2111.09543
+## Notes for Final Document
 
-Laurer, M., van Atteveldt, W., Casas, A., & Welbers, K. (2022). Less annotating, more classifying: Addressing the data scarcity issue of supervised machine learning with deep transfer learning and BERT-NLI. *Political Analysis*, 1-17.
+1. **Cross-references added:**
+   - 3.4.1: Section 2.1.4 for seasonality patterns in electricity demand
+   - 3.4.2: Section 2.2.2 for NLI-based classification
+   - 3.4.3: Section 2.2.2 for sentence embeddings introduction
+   - 3.4.4: Section 3.5 for parameter selection details
+   - 3.4.5: Section 2.2.2 for UMAP
 
-Laurer, M., van Atteveldt, W., Casas, A., & Welbers, K. (2023). Building efficient universal classifiers with natural language inference. *arXiv preprint arXiv:2312.17543*.
+2. **Key clarifications added:**
+   - Target variable is the spread, discretised into Long/Short/Neutral using ±3.0 EUR/MWh deadband
+   - Each category (except Sonstiges) has two directionally opposed leaf topics (price-increasing vs price-decreasing)
 
-Li, X., & Wang, J. (2021). The role of news sentiment in oil futures returns and volatility forecasting: Data-decomposition based deep learning approach. *Energy Economics*, 95, 105140.
+3. **Removed:**
+   - Normalisation/StandardScaler section
+   - Specific grid search parameter values (now deferred to Section 3.5)
 
-McInnes, L., Healy, J., & Melville, J. (2018). UMAP: Uniform manifold approximation and projection for dimension reduction. *arXiv preprint arXiv:1802.03426*.
-
-Reimers, N., & Gurevych, I. (2019). Sentence-BERT: Sentence embeddings using Siamese BERT-networks. In *Proceedings of EMNLP 2019*. https://arxiv.org/abs/1908.10084
-
-Reimers, N., & Gurevych, I. (2020). Making monolingual sentence embeddings multilingual using knowledge distillation. In *Proceedings of EMNLP 2020*.
-
-Taylor, J. W. (2008). Exponentially weighted information criteria for selecting among forecasting models. *International Journal of Forecasting*, 24(3), 513-524.
-
-Tetlock, P. C. (2007). Giving content to investor sentiment: The role of media in the stock market. *The Journal of Finance*, 62(3), 1139-1168.
-
-Wang, W., Wei, F., Dong, L., Bao, H., Yang, N., & Zhou, M. (2020). MiniLM: Deep self-attention distillation for task-agnostic compression of pre-trained transformers. In *Proceedings of NeurIPS 2020*.
-
-Wang, Z., Yang, J., & Li, Q. (2023). Zero-shot text classification for financial sentiment analysis. *Expert Systems with Applications*, 223, 119861.
-
-Weron, R. (2014). Electricity price forecasting: A review of the state-of-the-art with a look into the future. *International Journal of Forecasting*, 30(4), 1030-1081.
-
-Yin, W., Hay, J., & Roth, D. (2019). Benchmarking zero-shot text classification: Datasets, evaluation and entailment approach. In *Proceedings of EMNLP-IJCNLP 2019*. https://arxiv.org/abs/1909.00161
+4. **Parameters reflect current implementation:**
+   - Stage 1 threshold: 0.25
+   - Stage 2 threshold: 0.20
+   - High-level categories: 11
+   - Leaf topics: 20 (excluding Sonstiges)
+   - Total news features: 40
+   - Total features: 53

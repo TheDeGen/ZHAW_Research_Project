@@ -7,6 +7,7 @@ Modify these values to tune the pipeline behavior.
 
 import numpy as np
 from scipy import stats
+import matplotlib.pyplot as plt
 
 # ============================================================================
 # TIME-BASED CONSTANTS
@@ -182,6 +183,43 @@ TOPIC_VALENCE_MAP = {
     "Sport, Unterhaltung, Kultur oder Lokalnachrichten ohne Wirtschaftsbezug": 0,
 }
 
+# Topic label shortening: maps full topic labels to shortened category + keyword format
+# Each topic gets a unique descriptive keyword to distinguish it
+TOPIC_SHORT_LABELS = {
+    # Nachfrage
+    "Steigender Stromverbrauch durch Wirtschaft, Industrie oder Extremwetter": "Nachfrage (steigend)",
+    "Sinkender Stromverbrauch durch Konjunkturschwäche oder mildes Wetter": "Nachfrage (sinkend)",
+    # Angebot
+    "Kraftwerksausfälle, Netzengpässe oder geringe erneuerbare Einspeisung": "Angebot (Engpass)",
+    "Hohe erneuerbare Einspeisung, neue Kapazitäten oder stabile Netze": "Angebot (Ausbau)",
+    # Brennstoffpreise
+    "Steigende Gas-, Kohle- oder CO₂-Preise": "Brennstoff (steigend)",
+    "Fallende Gas-, Kohle- oder CO₂-Preise": "Brennstoff (fallend)",
+    # Wetter
+    "Kaltes, windarmes oder bewölktes Wetter": "Wetter (kalt)",
+    "Mildes Wetter, starke Winde oder viel Sonneneinstrahlung": "Wetter (mild)",
+    # Wirtschaft & Konjunktur
+    "Positive Wirtschaftsentwicklung, steigende Industrieproduktion oder Unternehmenswachstum": "Wirtschaft (Wachstum)",
+    "Rezession, Unternehmenskrise oder sinkende Industrieproduktion": "Wirtschaft (Krise)",
+    # Finanzmärkte & Geldpolitik
+    "Zinsentscheidungen, Inflation oder Währungsschwankungen": "Finanzen (Inflation)",
+    "Börsennachrichten, Unternehmensgewinne oder Investitionen": "Finanzen (Börse)",
+    # Handel & Außenwirtschaft
+    "Zölle, Handelskonflikte oder Exportbeschränkungen": "Handel (Konflikt)",
+    "Handelsabkommen, Marktöffnung oder Lieferkettenentwicklung": "Handel (Öffnung)",
+    # Geopolitik & Konflikte
+    "Krieg, Sanktionen, Terrorgefahr oder geopolitische Spannungen": "Geopolitik (Konflikt)",
+    "Friedensgespräche, Diplomatie oder Aufhebung von Sanktionen": "Geopolitik (Frieden)",
+    # Technologie & Industrie
+    "Technologieentwicklung, Halbleiter, Elektromobilität oder Batterieproduktion": "Technologie (Innovation)",
+    "Industriepolitik, Produktionsstandorte oder Unternehmensstrategien": "Industrie (Politik)",
+    # Politik & Regulierung
+    "Energiepolitik, Klimagesetze oder EU-Regulierung": "Politik (Energie)",
+    "Innenpolitik, Regierungsbildung oder Wahlen": "Politik (Inland)",
+    # Sonstiges
+    "Sport, Unterhaltung, Kultur oder Lokalnachrichten ohne Wirtschaftsbezug": "Sonstiges",
+}
+
 # ============================================================================
 # XGBOOST HYPERPARAMETER DISTRIBUTIONS
 # ============================================================================
@@ -222,7 +260,7 @@ TIME_DECAY_LAMBDAS = [0.01, 0.05, 0.1, 0.25, 0.5]
 
 NEWS_DATA_PATH = "german_news_v1.csv"
 ENERGY_DATA_PATH = "energy_baseline.csv"
-MIN_TIMESTAMP = "2023-01-01"
+MIN_TIMESTAMP = "2024-01-01"
 
 # ============================================================================
 # VISUALIZATION CONFIGURATION
@@ -235,42 +273,34 @@ DEFAULT_FIGSIZE_TALL = (12, 10)  # For plots with many rows
 DEFAULT_DPI = 200  # Publication quality
 
 # Font sizes for consistent styling
-VIZ_TITLE_FONTSIZE = 14
-VIZ_LABEL_FONTSIZE = 12
-VIZ_TICK_FONTSIZE = 10
-VIZ_LEGEND_FONTSIZE = 9
-VIZ_ANNOTATION_FONTSIZE = 9
+VIZ_TITLE_FONTSIZE = 15
+VIZ_LABEL_FONTSIZE = 13
+VIZ_TICK_FONTSIZE = 11
+VIZ_LEGEND_FONTSIZE = 10
+VIZ_ANNOTATION_FONTSIZE = 10
 
 # Label truncation lengths
 VIZ_LABEL_MAX_CHARS = 45  # Standard truncation length for y-axis labels
 VIZ_LABEL_MAX_CHARS_SHORT = 35  # Shorter truncation for cramped spaces
 
-# ColorBrewer Dark2 palette (colorblind-safe)
-# Reference: https://colorbrewer2.org/#type=qualitative&scheme=Dark2&n=8
-VIZ_COLOR_LIST = [
-    "#1B9E77",  # Teal
-    "#D95F02",  # Orange
-    "#7570B3",  # Purple
-    "#E7298A",  # Pink
-    "#66A61E",  # Green
-    "#E6AB02",  # Yellow
-    "#A6761D",  # Brown
-    "#666666",  # Gray
-]
+# Winter colormap - 10 evenly-spaced colors
+_winter = plt.cm.winter
+VIZ_COLOR_LIST = [_winter(i / 9) for i in range(10)]  # Returns RGBA tuples
 
-# Semantic color mappings for specific use cases
+# Semantic color mappings for specific use cases (Winter-derived)
+_winter_cmap = plt.cm.winter
 VIZ_SEMANTIC_COLORS = {
-    "long": "#1B9E77",       # Teal for positive/long positions
-    "neutral": "#666666",    # Gray for neutral
-    "short": "#D95F02",      # Orange for negative/short positions
-    "train": "#1B9E77",      # Teal for training metrics
-    "validation": "#D95F02", # Orange for validation metrics
-    "test": "#7570B3",       # Purple for test metrics
+    "long": _winter_cmap(0.0),      # Winter start (cyan) for positive/long positions
+    "neutral": _winter_cmap(0.5),   # Winter middle for neutral
+    "short": _winter_cmap(1.0),     # Winter end (blue) for negative/short positions
+    "train": _winter_cmap(0.0),     # Winter start for training metrics
+    "validation": _winter_cmap(0.7), # Winter position for validation metrics
+    "test": _winter_cmap(0.9),      # Winter position for test metrics
 }
 
-# Colormaps for heatmaps (colorblind-safe)
-VIZ_CMAP_SEQUENTIAL = "YlGnBu"   # Yellow-Green-Blue for sequential data
-VIZ_CMAP_DIVERGING = "RdYlBu"    # Red-Yellow-Blue for diverging data
+# Colormaps for heatmaps (Winter)
+VIZ_CMAP_SEQUENTIAL = "winter"  # Winter for sequential data
+VIZ_CMAP_DIVERGING = "winter"   # Winter for diverging data
 
 # Output directory for saved figures
 FIGURES_OUTPUT_DIR = "outputs/figures"
