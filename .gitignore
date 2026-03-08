@@ -118,5 +118,11 @@ dmypy.json
 
 .claude
 
+# Data prep (removed for publishing)
+data_prep/
+
+# Parquet files (cached embeddings)
+*.parquet
+
 # ds store
 .DS_Store

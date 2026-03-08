@@ -30,33 +30,38 @@ This pipeline predicts 24-hour ahead energy price movements (Long/Neutral/Short)
 ## Project Structure
 
 ```
-final_methodology_refactored/
 ├── config/
 │   ├── __init__.py
-│   ├── pipeline_config.py      # All configurable parameters
-│   └── model_config.py          # Model-specific configurations
+│   ├── pipeline_config.py        # All configurable parameters
+│   └── model_config.py           # Model-specific configurations
 │
 ├── scripts/
 │   ├── __init__.py
-│   ├── device_utils.py          # GPU/CPU detection, resource management
-│   ├── profiling.py             # Performance profiling and telemetry
-│   ├── data_ingestion.py        # Data loading and preprocessing
-│   ├── feature_engineering.py   # NLP, embeddings, time-decay features
-│   ├── model_utils.py           # XGBoost/LightGBM model training
-│   ├── evaluation.py            # Metrics, bootstrap CIs, statistical tests
-│   └── visualization.py         # Plotting functions
+│   ├── device_utils.py           # GPU/CPU detection, resource management
+│   ├── profiling.py              # Performance profiling and telemetry
+│   ├── data_ingestion.py         # Data loading and preprocessing
+│   ├── feature_engineering.py    # NLP, embeddings, time-decay features
+│   ├── model_utils.py            # XGBoost/LightGBM model training
+│   ├── evaluation.py             # Metrics, bootstrap CIs, statistical tests
+│   ├── save_models.py            # Model persistence utilities
+│   └── visualization.py          # Plotting functions
 │
 ├── notebooks/
-│   └── pipeline_execution.ipynb # Clean, streamlined execution notebook
+│   ├── pipeline_execution.ipynb  # Clean, streamlined execution notebook
+│   └── outputs/figures/          # Generated visualizations
 │
-├── data/                        # Place your data files here
-│   ├── german_news_v1.csv
-│   └── energy_baseline.csv
+├── prelim_results/
+│   └── FINAL_RUN_3.ipynb         # Final pipeline run used in research paper
 │
-├── outputs/                     # Model outputs and artifacts
-│   └── .cache/                  # Embedding and feature caches
+├── data/
+│   └── MasterFetcher.py          # Data fetching utility
 │
-└── README.md                    # This file
+├── outputs/                      # Model outputs and artifacts
+│   └── .cache/                   # Embedding and feature caches
+│
+├── Research Paper.pdf            # Published research paper
+├── requirements.txt
+└── README.md
 ```
 
 ## Key Benefits
